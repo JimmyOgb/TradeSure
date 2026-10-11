@@ -9,9 +9,9 @@ def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_a
     assert str(contract.get_owner()).lower() == str(direct_alice).lower()
     assert contract.get_total_disputes() == 0
 
-    # Register dispute
+    # Register dispute as buyer
     manifest = json.dumps([
-        {"id": "ev-01", "type": "carrier_tracking", "hash": "0xabc123", "summary": "Delivered to front door"}
+        {"id": "ev-01", "type": "carrier_tracking", "sha256": "0xabc12345678901234567", "summary": "Delivered to front door"}
     ])
     
     contract.register_dispute(
@@ -19,7 +19,7 @@ def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_a
         "ord-501",
         str(direct_alice),
         str(direct_bob),
-        "0xagreementhash123",
+        "0xagreementhash1234567890",
         "Electronics in original packaging, 3-day return policy",
         "Item arrived with cracked screen",
         manifest
@@ -31,18 +31,33 @@ def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_a
     assert dispute["status"] == "DISPUTE_OPEN"
 
 
-def test_dispute_registration_validations(direct_vm, direct_deploy, direct_alice):
+def test_dispute_registration_authorization_and_validations(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
     contract = direct_deploy("contracts/tradesure_dispute.py")
-    direct_vm.sender = direct_alice
-
+    
     # Missing mandatory parameters
+    direct_vm.sender = direct_alice
     with direct_vm.expect_revert("[EXPECTED] Missing mandatory dispute fields"):
-        contract.register_dispute("", "ord-1", "b", "s", "hash", "terms", "claim", "[]")
+        contract.register_dispute("", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
 
+    # Unauthorized party (Charlie is neither owner, buyer, nor seller)
+    with direct_vm.prank(direct_charlie):
+        with direct_vm.expect_revert("[EXPECTED] Unauthorized dispute registrant:"):
+            contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+
+    # Invalid short agreement hash
+    with direct_vm.expect_revert("[EXPECTED] Invalid agreement hash commitment"):
+        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "short", "terms", "claim", "[]")
+
+    # Malformed manifest
+    with direct_vm.expect_revert("[EXPECTED] Evidence manifest is not valid JSON"):
+        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "{invalid}")
+
+    # Register valid dispute
+    contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+    
     # Duplicate registration
-    contract.register_dispute("disp-1", "ord-1", "b", "s", "hash", "terms", "claim", "[]")
     with direct_vm.expect_revert("[EXPECTED] Dispute already registered: disp-1"):
-        contract.register_dispute("disp-1", "ord-1", "b", "s", "hash", "terms", "claim", "[]")
+        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
 
 
 def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -53,7 +68,7 @@ def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice,
         {
             "id": "EV-PHOTO-DAMAGED",
             "type": "product_condition_photo",
-            "sha256": "4a7d...31",
+            "sha256": "4a7d1234567890abcdef1234567890",
             "description": "High-resolution photo showing completely cracked screen upon unboxing",
             "timestamp": "2026-10-10T12:00:00Z"
         }
@@ -64,13 +79,12 @@ def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice,
         "ord-701",
         str(direct_alice),
         str(direct_bob),
-        "0xtermscommitment",
+        "0xtermscommitment1234567890",
         "Condition: Brand New, undamaged screen required. Delivery within 5 days.",
         "Buyer claims phone arrived severely cracked on delivery. Seller claims carrier fault.",
         evidence_manifest
     )
 
-    # Mock GenLayer LLM arbiter response
     mock_llm_response = {
         "outcome": "BUYER_SUPPORTED",
         "rationale": "Evidence shows verified photo of cracked screen upon delivery, violating agreed Brand New condition.",
@@ -91,7 +105,6 @@ def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice,
     assert "EV-PHOTO-DAMAGED" in resolution["evidence_cited"]
     assert "cracked screen" in resolution["rationale"]
 
-    # Verify state changed to RESOLVED and cannot be resolved twice
     dispute = contract.get_dispute("disp-buyer-win")
     assert dispute["status"] == "RESOLVED"
 
@@ -107,7 +120,7 @@ def test_resolve_dispute_seller_supported(direct_vm, direct_deploy, direct_alice
         {
             "id": "EV-CARRIER-SIGNATURE",
             "type": "delivery_confirmation",
-            "sha256": "8f3b...11",
+            "sha256": "8f3b1234567890abcdef1234567890",
             "description": "Carrier signature and GPS coordinates matching buyer delivery address",
             "timestamp": "2026-10-09T14:30:00Z"
         }
@@ -118,7 +131,7 @@ def test_resolve_dispute_seller_supported(direct_vm, direct_deploy, direct_alice
         "ord-702",
         str(direct_alice),
         str(direct_bob),
-        "0xtermscommitment",
+        "0xtermscommitment1234567890",
         "Delivery to registered address constitutes full fulfillment.",
         "Buyer claims non-receipt. Seller provides carrier proof of delivery with buyer signature.",
         evidence_manifest
@@ -153,7 +166,7 @@ def test_resolve_dispute_inconclusive(direct_vm, direct_deploy, direct_alice, di
         "ord-703",
         str(direct_alice),
         str(direct_bob),
-        "0xtermscommitment",
+        "0xtermscommitment1234567890",
         "Specification: Vintage watch authenticity guarantee.",
         "Conflicting unofficial appraisals from non-certified third parties.",
         "[]"
