@@ -13,8 +13,8 @@
 | **Chain ID** | `61999` (`0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
 | **Explorer** | [https://studio.genlayer.com](https://studio.genlayer.com) |
-| **Intelligent Contract Address** | [`0xB4cDCae8212d852C388E5677b91D8D6f71467A3a`](https://studio.genlayer.com) |
-| **Deployment Transaction Hash** | `0x553602b3639afd151af48bf288fe6e7986db8aa2365d34ede78f127ae35d004a` |
+| **Intelligent Contract Address** | [`0x09ee2561c62CC6e74cf2111D062560422376666C`](https://studio.genlayer.com) |
+| **Deployment Transaction Hash** | `0xa5999f48fc443d01ad15e7ddf11bdabc1fc1499388ad9cbf2ed1443223cd6908` |
 | **Consensus Deployment Status** | **`FINALIZED`** (`MAJORITY_AGREE`, 5/5 validator votes committed & revealed) |
 | **Contract Runner Dependency** | `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }` |
 | **Zero-Mock Enforcement** | **Passed** (No demo seeds, fake hashes, or simulated delay fallbacks in production paths) |
@@ -71,7 +71,7 @@ flowchart TD
     end
 
     subgraph GenLayer["GenLayer StudioNet (Chain ID: 61999)"]
-        Contract["TradeSureDispute.py (0xB4cDCae8212d852C388E5677b91D8D6f71467A3a)"]
+        Contract["TradeSureDispute.py (0x09ee2561c62CC6e74cf2111D062560422376666C)"]
         Leader["Validator Leader"]
         Validators["Independent Validators (Consensus Pool)"]
     end
@@ -123,10 +123,10 @@ GenLayer introduces **Intelligent Contracts** with nondeterministic execution (`
 
 ### Active Deployment Record
 - **Contract Source**: [`contracts/tradesure_dispute.py`](file:///C:/Users/NO%20GO%20NO/TradeSure/contracts/tradesure_dispute.py)
-- **Deployed Address**: `0xB4cDCae8212d852C388E5677b91D8D6f71467A3a`
-- **Deployer Account**: `0x03371646Bf0ED2f96Dac44Fbd5e9d84E6a3EDCA0`
-- **Deployment Transaction Hash**: `0x553602b3639afd151af48bf288fe6e7986db8aa2365d34ede78f127ae35d004a`
-- **Deployment Consensus Status**: `FINALIZED` (`MAJORITY_AGREE`, 5/5 votes)
+- **Deployed Address**: `0x09ee2561c62CC6e74cf2111D062560422376666C`
+- **Deployer Account**: `0x23fcd99740565d43a610f12b6b684b28d1f514f1`
+- **Deployment Transaction Hash**: `0xa5999f48fc443d01ad15e7ddf11bdabc1fc1499388ad9cbf2ed1443223cd6908`
+- **Deployment Consensus Status**: `FINALIZED` (`MAJORITY_AGREE`, 0 errors, `execution_result: SUCCESS`)
 - **Bytecode Verification**: 100% exact character-for-character match (`10,329` bytes decoded base64).
 
 ### Public Contract Methods
@@ -159,7 +159,7 @@ cp .env.example frontend/.env.local
 | `NEXT_PUBLIC_GENLAYER_CHAIN_ID` | Yes | Yes | StudioNet Chain ID | `61999` |
 | `NEXT_PUBLIC_GENLAYER_RPC` | Yes | Yes | GenLayer StudioNet RPC endpoint | `https://studio.genlayer.com/api` |
 | `NEXT_PUBLIC_GENLAYER_EXPLORER` | Yes | Yes | Block explorer web URL | `https://studio.genlayer.com` |
-| `NEXT_PUBLIC_TRADESURE_CONTRACT_ADDRESS` | Yes | Yes | Active deployed contract address | `0xB4cDCae8212d852C388E5677b91D8D6f71467A3a` |
+| `NEXT_PUBLIC_TRADESURE_CONTRACT_ADDRESS` | Yes | Yes | Active deployed contract address | `0x09ee2561c62CC6e74cf2111D062560422376666C` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Optional | Yes | Supabase project URL | `https://xyz.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional | Yes | Supabase public anonymous API key | `<your-anon-key>` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Optional | **No (Server-Only)** | Admin database role key | `<your-service-key>` |
@@ -264,10 +264,10 @@ Open [http://localhost:3001](http://localhost:3001) in your browser.
 | Feature Area | Status | Notes |
 | :--- | :---: | :--- |
 | **Next.js 16 UI & Dashboard** | **Implemented** | Orders, Agreements, Disputes, Public Certificate |
-| **GenLayer Contract Consensus** | **Implemented** | Deployed on StudioNet (`0xB4cDCae8212d852C388E5677b91D8D6f71467A3a`) |
+| **GenLayer Contract Consensus** | **Implemented** | Deployed & verified on StudioNet (`0x09ee2561c62CC6e74cf2111D062560422376666C`) |
 | **Zero-Mock Enforcement** | **Implemented** | Real hashing, real states, real on-chain transaction hashes |
 | **SQL Database Schema & RLS** | **Implemented** | Migration file ready in `supabase/migrations/` |
-| **Live Cloud Database Connection** | **Partially Implemented** | Running clean in-memory state engine; Supabase ready to plug in |
+| **Live Cloud Database Connection** | **Configurable** | Hybrid architecture: Full Supabase PostgreSQL persistence when configured, explicit transparent notice otherwise |
 | **Automated Escrow / Payments** | **Planned (Roadmap)** | Direct escrow lockup & Stripe integration planned for future versions |
 
 ---

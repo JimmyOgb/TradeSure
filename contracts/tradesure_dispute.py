@@ -34,7 +34,7 @@ class TradeSureDispute(gl.Contract):
     dispute_ids: DynArray[str]
 
     def __init__(self):
-        self.owner = gl.message.sender_account
+        self.owner = gl.message.sender_address
         self.dispute_count = u256(0)
 
     @gl.public.view
@@ -80,7 +80,7 @@ class TradeSureDispute(gl.Contract):
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Missing mandatory dispute fields")
 
         # Caller authorization: Only buyer, seller, or contract owner can register dispute
-        sender_str = str(gl.message.sender_account).lower()
+        sender_str = str(gl.message.sender_address).lower()
         allowed = (
             sender_str == str(self.owner).lower()
             or sender_str == buyer_id.lower()
@@ -114,7 +114,7 @@ class TradeSureDispute(gl.Contract):
             "claim_summary": claim_summary,
             "evidence_manifest_json": evidence_manifest_json,
             "status": "DISPUTE_OPEN",
-            "registered_by": str(gl.message.sender_account),
+            "registered_by": str(gl.message.sender_address),
         }
 
         self.disputes[dispute_id] = json.dumps(dispute_data)

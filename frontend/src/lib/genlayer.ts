@@ -8,7 +8,7 @@ export const GENLAYER_STUDIONET_CONFIG = {
 
 export const TRADESURE_CONTRACT_ADDRESS =
   (process.env.NEXT_PUBLIC_TRADESURE_CONTRACT_ADDRESS as `0x${string}`) ||
-  "0xB4cDCae8212d852C388E5677b91D8D6f71467A3a";
+  "0x09ee2561c62CC6e74cf2111D062560422376666C";
 
 export function getGenLayerClient(privateKey?: `0x${string}`) {
   const account = privateKey ? createAccount(privateKey) : createAccount();
@@ -40,6 +40,16 @@ export async function evaluateDisputeOnChain(params: {
   const client = getGenLayerClient();
   const manifestJson = JSON.stringify(params.evidenceManifest);
 
+  // Authorize caller on-chain: if buyerId is an internal ID, use client wallet address
+  const onchainBuyerId =
+    params.buyerId.startsWith("0x") && params.buyerId.length === 42
+      ? params.buyerId
+      : (client.account?.address || "0x0000000000000000000000000000000000000000");
+  const onchainSellerId =
+    params.sellerId.startsWith("0x") && params.sellerId.length === 42
+      ? params.sellerId
+      : "0x0000000000000000000000000000000000000001";
+
   try {
     // 1. Submit on-chain registration transaction
     const registerTxHash = await client.writeContract({
@@ -48,8 +58,8 @@ export async function evaluateDisputeOnChain(params: {
       args: [
         params.disputeId,
         params.orderId,
-        params.buyerId,
-        params.sellerId,
+        onchainBuyerId,
+        onchainSellerId,
         params.agreementHash,
         params.agreementTerms,
         params.claimSummary,
