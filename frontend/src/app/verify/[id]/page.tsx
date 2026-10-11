@@ -5,8 +5,6 @@ import Link from "next/link";
 import { Dispute, Order } from "@/lib/types";
 import { ShieldCheck, CheckCircle2, Scale, ExternalLink, ArrowLeft } from "lucide-react";
 
-
-
 function PublicVerifyContent({ id }: { id: string }) {
   const [dispute, setDispute] = useState<Dispute | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
@@ -14,10 +12,16 @@ function PublicVerifyContent({ id }: { id: string }) {
 
   useEffect(() => {
     fetch(`/api/disputes/${id}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error("Not found");
+        return res.json();
+      })
       .then((data) => {
         setDispute(data.dispute);
         setOrder(data.order);
+      })
+      .catch(() => {
+        setDispute(null);
       })
       .finally(() => setLoading(false));
   }, [id]);
@@ -30,7 +34,12 @@ function PublicVerifyContent({ id }: { id: string }) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center">
         <h1 className="text-xl font-bold text-slate-900">Record Not Found</h1>
-        <p className="text-xs text-slate-500 mt-2">No public resolution record matches this reference identifier.</p>
+        <p className="text-xs text-slate-500 mt-2">No dispute resolution record matches this reference identifier.</p>
+        <div className="mt-6">
+          <Link href="/disputes" className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+            &larr; View all disputes
+          </Link>
+        </div>
       </div>
     );
   }
@@ -82,12 +91,19 @@ function PublicVerifyContent({ id }: { id: string }) {
             </p>
           </div>
 
-          <div className="py-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase block mb-1">StudioNet Blockchain Transaction</span>
-            <p className="font-mono text-xs text-indigo-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 truncate">
-              {dispute.onchain_tx_hash || "0x33ad7164d2924ed2f0a8be40db4b943211bf6d553baf5491929478a673c901bc"}
-            </p>
-          </div>
+          {dispute.onchain_tx_hash ? (
+            <div className="py-2">
+              <span className="text-xs font-semibold text-slate-500 uppercase block mb-1">StudioNet Blockchain Transaction</span>
+              <p className="font-mono text-xs text-indigo-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 truncate">
+                {dispute.onchain_tx_hash}
+              </p>
+            </div>
+          ) : (
+            <div className="py-2">
+              <span className="text-xs font-semibold text-slate-500 uppercase block mb-1">Blockchain Transaction</span>
+              <p className="text-xs text-slate-400 italic">No on-chain transaction recorded yet.</p>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 pt-6 border-t border-slate-100 text-center">

@@ -5,18 +5,17 @@ import { User, Building, Shield, Key } from "lucide-react";
 
 export default function SettingsPage() {
   const [profile, setProfile] = useState({
-    fullName: "Commerce Operations Lead",
-    email: "operations@tradesure.example",
-    role: "org_admin",
-    organization: "Global Merchants Corp",
-    walletAddress: "0xE4220c4b71877bb94EB173f467ef5c5557017085",
+    fullName: "",
+    email: "",
+    role: "buyer",
+    organization: "",
+    walletAddress: "",
   });
   const [saved, setSaved] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
   };
 
   return (
@@ -46,6 +45,7 @@ export default function SettingsPage() {
                 <label className="block text-xs font-semibold uppercase text-slate-700 mb-1">Full Name</label>
                 <input
                   type="text"
+                  placeholder="Your full name"
                   value={profile.fullName}
                   onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
@@ -55,9 +55,10 @@ export default function SettingsPage() {
                 <label className="block text-xs font-semibold uppercase text-slate-700 mb-1">Account Email</label>
                 <input
                   type="email"
-                  disabled
+                  placeholder="your.email@example.com"
                   value={profile.email}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 text-slate-500"
+                  onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-900"
                 />
               </div>
             </div>
@@ -69,11 +70,22 @@ export default function SettingsPage() {
                 onChange={(e) => setProfile({ ...profile, role: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
               >
-                <option value="org_admin">Organization Administrator</option>
-                <option value="dispute_reviewer">Authorized Dispute Reviewer</option>
-                <option value="seller">Seller</option>
                 <option value="buyer">Buyer</option>
+                <option value="seller">Seller</option>
+                <option value="dispute_reviewer">Authorized Dispute Reviewer</option>
+                <option value="org_admin">Organization Administrator</option>
               </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase text-slate-700 mb-1">Connected StudioNet Wallet Address</label>
+              <input
+                type="text"
+                placeholder="0x..."
+                value={profile.walletAddress}
+                onChange={(e) => setProfile({ ...profile, walletAddress: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono"
+              />
             </div>
 
             <div className="pt-2 flex justify-end">
@@ -81,7 +93,7 @@ export default function SettingsPage() {
                 type="submit"
                 className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition"
               >
-                Save Changes
+                Save Settings
               </button>
             </div>
           </form>
@@ -96,9 +108,9 @@ export default function SettingsPage() {
 
           <div className="space-y-4 text-xs text-slate-600">
             <div>
-              <span className="font-semibold text-slate-900 block mb-1">Configured StudioNet Wallet</span>
+              <span className="font-semibold text-slate-900 block mb-1">Connected StudioNet Wallet</span>
               <p className="font-mono bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-slate-700">
-                {profile.walletAddress}
+                {profile.walletAddress || "No wallet connected. Configure address above."}
               </p>
             </div>
 

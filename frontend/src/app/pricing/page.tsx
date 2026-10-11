@@ -8,13 +8,13 @@ export default function PricingPage() {
       price: "$49",
       description: "For independent e-commerce sellers wanting automated dispute evidence records.",
       features: [
-        "Up to 100 documented order agreements / mo",
+        "Documented order agreements",
         "Cryptographic SHA-256 evidence hashing",
         "GenLayer consensus dispute evaluation",
         "Buyer & seller agreement sign-off workflow",
         "Community support",
       ],
-      cta: "Get Started",
+      cta: "Create Order Agreement",
       highlighted: false,
     },
     {
@@ -22,14 +22,14 @@ export default function PricingPage() {
       price: "$199",
       description: "For scaling retailers and marketplaces handling high-volume commerce trust.",
       features: [
-        "Up to 1,000 documented agreements / mo",
+        "High-volume documented agreements",
         "Priority GenLayer StudioNet validator execution",
         "Multi-organization team access & roles",
         "Carrier tracking & photo verification integration",
         "Human review escalation workflows",
         "Dedicated technical support",
       ],
-      cta: "Start Free Trial",
+      cta: "Create Order Agreement",
       highlighted: true,
     },
     {
@@ -41,9 +41,9 @@ export default function PricingPage() {
         "Custom GenLayer contract deployment",
         "Dedicated on-chain arbitration rules & policies",
         "Full Supabase private storage isolation",
-        "SLA & 24/7 dedicated escalation support",
+        "SLA & dedicated escalation support",
       ],
-      cta: "Contact Enterprise Sales",
+      cta: "Create Order Agreement",
       highlighted: false,
     },
   ];
@@ -57,8 +57,8 @@ export default function PricingPage() {
         <p className="mt-4 text-slate-600 text-sm sm:text-base leading-relaxed">
           Select a plan designed for your merchant order volume. Automated dispute management and GenLayer StudioNet consensus verification included across all tiers.
         </p>
-        <p className="mt-2 text-xs text-amber-700 bg-amber-50 inline-block px-3 py-1 rounded-full border border-amber-200">
-          Payment processing integration in sandbox staging &bull; No credit card required during preview
+        <p className="mt-2 text-xs text-slate-600 bg-slate-100 inline-block px-3 py-1 rounded-full border border-slate-200">
+          Payment processing gateway integrations (Stripe / Escrow) are planned for future releases. Direct orders and contract arbitration can be used immediately.
         </p>
       </div>
 
@@ -77,7 +77,7 @@ export default function PricingPage() {
                 <h3 className="text-lg font-bold text-slate-900">{tier.name}</h3>
                 {tier.highlighted && (
                   <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
-                    Most Popular
+                    Recommended
                   </span>
                 )}
               </div>
