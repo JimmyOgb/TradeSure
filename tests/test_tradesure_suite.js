@@ -74,6 +74,54 @@ async function verifyContract() {
   });
   assert(owner.startsWith("0x"), "Owner must be a valid 0x address");
   console.log("✔ Contract owner verified: " + owner);
+
+  // 4. Test Live GenLayer StudioNet TradeSureEscrow Contract
+  console.log("\n[Test 4] Live GenLayer StudioNet Escrow Contract State Verification");
+  const ESCROW_ADDRESS = "0x25c769C2a74DEd3F7CE75C6c00EcCFC7b9da82cB";
+  const escrowOwner = await client.readContract({
+    address: ESCROW_ADDRESS,
+    functionName: "get_owner",
+    args: [],
+  });
+  assert(escrowOwner.startsWith("0x"), "Escrow owner must be a valid 0x address");
+  console.log("✔ Escrow contract owner verified: " + escrowOwner);
+
+  const totalEscrows = await client.readContract({
+    address: ESCROW_ADDRESS,
+    functionName: "get_total_escrows",
+    args: [],
+  });
+  assert(Number(totalEscrows) >= 1, "Escrow contract must reflect at least 1 registered escrow agreement");
+  console.log("✔ Total Escrows verified on-chain: " + totalEscrows);
+
+  const linkedDispute = await client.readContract({
+    address: ESCROW_ADDRESS,
+    functionName: "get_dispute_contract",
+    args: [],
+  });
+  assert.strictEqual(
+    linkedDispute.toLowerCase(),
+    CONTRACT_ADDRESS.toLowerCase(),
+    "Escrow must link to verified TradeSureDispute contract"
+  );
+  console.log("✔ Linked Dispute Arbiter verified: " + linkedDispute);
+
+  // 5. Test Live ERC-20 WETH Token Contract on StudioNet
+  console.log("\n[Test 5] Live GenLayer StudioNet ERC-20 Token Verification");
+  const WETH_ADDRESS = "0xA4D48154601A9356CCeF8E80ebe9c8ef10290e04";
+  const tokenName = await client.readContract({
+    address: WETH_ADDRESS,
+    functionName: "name",
+    args: [],
+  });
+  assert.strictEqual(tokenName, "Wrapped Ether", "Token name must match Wrapped Ether");
+  const tokenSymbol = await client.readContract({
+    address: WETH_ADDRESS,
+    functionName: "symbol",
+    args: [],
+  });
+  assert.strictEqual(tokenSymbol, "WETH", "Token symbol must match WETH");
+  console.log(`✔ Verified live ERC-20 Token: ${tokenName} (${tokenSymbol}) at ${WETH_ADDRESS}`);
 }
 
 verifyContract().then(() => {

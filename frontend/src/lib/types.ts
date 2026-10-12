@@ -137,3 +137,37 @@ export function computeTermsCommitmentHash(terms: {
 export function computeBufferSha256(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
+
+export interface EscrowMilestone {
+  id: string;
+  title: string;
+  amount: number | string;
+  deadline?: string;
+  acceptance_criteria?: string;
+  status: "PENDING" | "SUBMITTED" | "APPROVED" | "RELEASED" | "DISPUTED" | "REFUNDED" | "SETTLED_INCONCLUSIVE";
+  evidence_hash?: string;
+  evidence_summary?: string;
+}
+
+export interface EscrowAgreementState {
+  agreement_id: string;
+  buyer: string;
+  seller: string;
+  token_address: string;
+  terms_hash: string;
+  total_amount: number | string;
+  deposited_amount: number | string;
+  released_amount: number | string;
+  refunded_amount: number | string;
+  locked_balance: number | string;
+  status: "NOT_CREATED" | "CREATED" | "FUNDED" | "DISPUTED" | "COMPLETED" | "REFUNDED";
+  active_dispute_id?: string;
+  disputed_milestone_id?: string;
+  milestones: EscrowMilestone[];
+  last_settlement?: {
+    dispute_id: string;
+    outcome: string;
+    rationale: string;
+  };
+  contract_address: string;
+}

@@ -4,6 +4,7 @@ import { useEffect, useState, use, Suspense } from "react";
 import Link from "next/link";
 import { Order, AgreementVersion, EvidenceItem } from "@/lib/types";
 import { ArrowLeft, CheckCircle2, Shield, Upload, FileText, Scale, ExternalLink } from "lucide-react";
+import { EscrowWorkflow } from "@/components/EscrowWorkflow";
 
 
 
@@ -151,6 +152,17 @@ function OrderDetailContent({ id }: { id: string }) {
           </div>
         )}
       </div>
+
+      {/* On-Chain Milestone Escrow Workflow */}
+      <EscrowWorkflow
+        orderId={order.id}
+        orderTitle={order.title}
+        totalAmountUsd={order.total_amount}
+        termsHash={activeAgreement?.terms_commitment_hash || ""}
+        buyerEmail={order.buyer_email}
+        sellerEmail={order.seller_email}
+        isAgreementAccepted={Boolean(activeAgreement?.buyer_accepted_at && activeAgreement?.seller_accepted_at)}
+      />
 
       <div className="grid lg:grid-cols-2 gap-8">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
