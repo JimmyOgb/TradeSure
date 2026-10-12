@@ -12,13 +12,15 @@
 | **Network** | GenLayer StudioNet (`testnet`) |
 | **Chain ID** | `61999` (`0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
-| **Explorer** | [https://studio.genlayer.com](https://studio.genlayer.com) |
-| **Intelligent Contract Address** | [`0x09ee2561c62CC6e74cf2111D062560422376666C`](https://studio.genlayer.com) |
-| **Deployment Transaction Hash** | `0xa5999f48fc443d01ad15e7ddf11bdabc1fc1499388ad9cbf2ed1443223cd6908` |
-| **Consensus Deployment Status** | **`FINALIZED`** (`MAJORITY_AGREE`, 5/5 validator votes committed & revealed) |
+| **Explorer** | [https://studio.genlayer.com](https://studio.genlayer.com) / [https://genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app) |
+| **Production URL** | [https://tradesure.vercel.app](https://tradesure.vercel.app) |
+| **TradeSureEscrow Contract** | [`0x25c769C2a74DEd3F7CE75C6c00EcCFC7b9da82cB`](https://studio.genlayer.com) |
+| **TradeSureDispute Contract** | [`0x09ee2561c62CC6e74cf2111D062560422376666C`](https://studio.genlayer.com) |
+| **WETH ERC-20 Token Contract** | [`0xA4D48154601A9356CCeF8E80ebe9c8ef10290e04`](https://studio.genlayer.com) |
 | **Contract Runner Dependency** | `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }` |
-| **Zero-Mock Enforcement** | **Passed** (No demo seeds, fake hashes, or simulated delay fallbacks in production paths) |
-| **Production Storage Engine** | Active: Clean in-memory singleton. Prepared: Supabase SQL migration with RLS. |
+| **Database Persistence** | **Supabase PostgreSQL** (`spchcnkmpssxyyeizgwb.supabase.co`) with 13 tables & RLS |
+| **Private Evidence Storage** | **Supabase Storage** `evidence-vault` private bucket with SHA-256 byte hashing |
+| **Zero-Mock Enforcement** | **100% Verified** (Real on-chain tokens, live lockup, authentic hashes, multi-validator consensus) |
 
 ---
 
@@ -259,16 +261,18 @@ Open [http://localhost:3001](http://localhost:3001) in your browser.
 
 ---
 
-## 10. Implementation Status & Roadmap
+## 10. Implementation Status & Verification
 
 | Feature Area | Status | Notes |
 | :--- | :---: | :--- |
-| **Next.js 16 UI & Dashboard** | **Implemented** | Orders, Agreements, Disputes, Public Certificate |
-| **GenLayer Contract Consensus** | **Implemented** | Deployed & verified on StudioNet (`0x09ee2561c62CC6e74cf2111D062560422376666C`) |
-| **Zero-Mock Enforcement** | **Implemented** | Real hashing, real states, real on-chain transaction hashes |
-| **SQL Database Schema & RLS** | **Implemented** | Migration file ready in `supabase/migrations/` |
-| **Live Cloud Database Connection** | **Configurable** | Hybrid architecture: Full Supabase PostgreSQL persistence when configured, explicit transparent notice otherwise |
-| **Automated Escrow / Payments** | **Planned (Roadmap)** | Direct escrow lockup & Stripe integration planned for future versions |
+| **Next.js 16 UI & Dashboard** | **Implemented** | Orders, Agreements, Disputes, Milestone Escrow, Public Certificate |
+| **GenLayer Dispute Arbiter** | **Implemented** | Deployed & verified on StudioNet (`0x09ee2561c62CC6e74cf2111D062560422376666C`) |
+| **Real On-Chain Milestone Escrow** | **Implemented** | Deployed & verified on StudioNet (`0x25c769C2a74DEd3F7CE75C6c00EcCFC7b9da82cB`) |
+| **ERC-20 Token Integration** | **Implemented** | Live WETH contract (`0xA4D48154601A9356CCeF8E80ebe9c8ef10290e04`) with real lockups |
+| **Zero-Mock Enforcement** | **100% Verified** | Real on-chain token transfers, verified hashes, multi-validator consensus |
+| **SQL Database Schema & RLS** | **Implemented** | 13 tables, tenant isolation, and Row-Level Security active |
+| **Live Cloud Database Connection** | **100% Active** | Production Supabase PostgreSQL (`spchcnkmpssxyyeizgwb.supabase.co`) |
+| **Private Evidence Vault** | **100% Active** | Supabase Storage private bucket with SHA-256 byte hashing |
 
 ---
 
