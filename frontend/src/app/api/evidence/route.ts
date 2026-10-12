@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/store";
 import { EvidenceItem, computeBufferSha256 } from "@/lib/types";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { uploadEvidenceToSupabase, fetchOrderByIdFromSupabase } from "@/lib/supabaseService";
@@ -56,70 +55,37 @@ export async function POST(req: Request) {
       fileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
     }
 
-    const evidenceId = `ev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const evidenceId = crypto.randomUUID();
 
-    // Persistent storage branch
-    if (isSupabaseConfigured()) {
-      const orderData = await fetchOrderByIdFromSupabase(order_id);
-      if (!orderData.order) {
-        return NextResponse.json({ error: "Order not found" }, { status: 404 });
-      }
-
-      const submittedById =
-        submitted_by_role === "buyer" ? orderData.order.buyer_id : orderData.order.seller_id;
-
-      const evidence = await uploadEvidenceToSupabase({
-        orderId: order_id,
-        evidenceId,
-        submittedByRole: submitted_by_role,
-        submittedById,
-        evidenceType: evidence_type,
-        description: description.trim(),
-        fileName,
-        fileBytesSha256: fileHash,
-        fileBuffer: buffer,
-        mimeType,
-      });
-
-      return NextResponse.json({ evidence, storage: "supabase" }, { status: 201 });
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: "Durable database persistence is unavailable. Supabase credentials must be configured." },
+        { status: 503 }
+      );
     }
 
-    // In-memory fallback
-    const order = db.orders.get(order_id);
-    if (!order) {
+    const orderData = await fetchOrderByIdFromSupabase(order_id);
+    if (!orderData.order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    const newEvidence: EvidenceItem = {
-      id: evidenceId,
-      order_id,
-      submitted_by: submitted_by_role === "buyer" ? order.buyer_id : order.seller_id,
-      submitted_by_role,
-      evidence_type,
+    const submittedById =
+      submitted_by_role === "buyer" ? orderData.order.buyer_id : orderData.order.seller_id;
+
+    const evidence = await uploadEvidenceToSupabase({
+      orderId: order_id,
+      evidenceId,
+      submittedByRole: submitted_by_role,
+      submittedById,
+      evidenceType: evidence_type,
       description: description.trim(),
-      file_name: fileName,
-      file_bytes_sha256: fileHash,
-      storage_path: `evidence/${order_id}/${evidenceId}_${fileName}`,
-      mime_type: mimeType,
-      submitted_at: new Date().toISOString(),
-    };
+      fileName,
+      fileBytesSha256: fileHash,
+      fileBuffer: buffer,
+      mimeType,
+    });
 
-    const existing = db.evidence.get(order_id) || [];
-    existing.push(newEvidence);
-    db.evidence.set(order_id, existing);
-
-    if (order.status === "AGREEMENT_ACCEPTED") {
-      order.status = "EVIDENCE_SUBMITTED";
-    }
-
-    return NextResponse.json(
-      {
-        evidence: newEvidence,
-        storage: "in_memory",
-        warning: "Evidence metadata and hash registered in-memory. Configure Supabase storage bucket for persistent file archival.",
-      },
-      { status: 201 }
-    );
+    return NextResponse.json({ evidence, storage: "supabase" }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

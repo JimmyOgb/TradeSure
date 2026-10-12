@@ -1,9 +1,9 @@
 const assert = require("assert");
 
-const BASE_URL = "https://tradesure.vercel.app";
+const BASE_URL = process.env.BASE_URL || "https://tradesure.vercel.app";
 
 async function main() {
-  console.log("=== Testing Live TradeSure Production Deployment at:", BASE_URL, "===");
+  console.log("=== Testing TradeSure Deployment at:", BASE_URL, "===");
 
   // 1. Homepage Health
   console.log("\n[Step 1] Verifying Homepage (HTTP 200)...");
@@ -36,6 +36,7 @@ async function main() {
   const orderData = await createOrderRes.json();
   const orderId = orderData.order.id;
   assert(orderId, "Order must have an ID");
+  assert.strictEqual(orderData.storage, "supabase", "Order must be persisted in Supabase");
   console.log("✔ Order Created successfully with ID:", orderId, "Storage:", orderData.storage);
 
   // 3. Refresh and Read Order

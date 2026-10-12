@@ -5,18 +5,23 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
  */
 export function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || url.includes("your-project-id") || !url.startsWith("https://")) {
     return false;
   }
 
-  const hasKey =
-    (serviceKey && !serviceKey.includes("your-supabase-service-role-key")) ||
-    (anonKey && !anonKey.includes("your-supabase-anon-key"));
+  const hasValidServiceKey =
+    serviceKey &&
+    !serviceKey.includes("your-supabase-service-role-key") &&
+    serviceKey.length > 10;
+  const hasValidAnonKey =
+    anonKey &&
+    !anonKey.includes("your-supabase-anon-key") &&
+    anonKey.length > 10;
 
-  return Boolean(hasKey);
+  return Boolean(hasValidServiceKey || hasValidAnonKey);
 }
 
 /**
@@ -27,7 +32,10 @@ let adminClient: SupabaseClient | null = null;
 
 export function getSupabaseAdmin(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!url || !key || url.includes("your-project-id")) {
     throw new Error(
@@ -52,7 +60,9 @@ export function getSupabaseAdmin(): SupabaseClient {
  */
 export function getSupabaseClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!url || !key || url.includes("your-project-id")) {
     throw new Error(

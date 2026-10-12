@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS public.agreement_versions (
     permitted_evidence_types TEXT[] NOT NULL,
     dispute_procedure TEXT NOT NULL,
     terms_commitment_hash TEXT NOT NULL, -- SHA-256 canonical hash of agreement terms
+    buyer_accepted_at TIMESTAMPTZ,
+    seller_accepted_at TIMESTAMPTZ,
     created_by UUID REFERENCES public.profiles(id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(order_id, version_number)
@@ -85,12 +87,12 @@ CREATE TABLE IF NOT EXISTS public.agreement_versions (
 CREATE TABLE IF NOT EXISTS public.agreement_acceptances (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     agreement_version_id UUID NOT NULL REFERENCES public.agreement_versions(id) ON DELETE CASCADE,
-    party_id UUID NOT NULL REFERENCES public.profiles(id),
+    party_id UUID REFERENCES public.profiles(id),
     party_role TEXT NOT NULL CHECK (party_role IN ('buyer', 'seller')),
     commitment_hash_accepted TEXT NOT NULL,
     accepted_at TIMESTAMPTZ DEFAULT NOW(),
     ip_address TEXT,
-    UNIQUE(agreement_version_id, party_id)
+    UNIQUE(agreement_version_id, party_role)
 );
 
 -- 7. Evidence Table
@@ -98,7 +100,8 @@ CREATE TABLE IF NOT EXISTS public.evidence (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
     dispute_id UUID,
-    submitted_by UUID NOT NULL REFERENCES public.profiles(id),
+    submitted_by UUID REFERENCES public.profiles(id),
+    submitted_by_role TEXT NOT NULL DEFAULT 'buyer' CHECK (submitted_by_role IN ('buyer', 'seller', 'reviewer', 'admin')),
     organization_id UUID REFERENCES public.organizations(id),
     evidence_type TEXT NOT NULL CHECK (evidence_type IN (
         'delivery_photo',
@@ -123,7 +126,7 @@ CREATE TABLE IF NOT EXISTS public.disputes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     dispute_reference TEXT NOT NULL UNIQUE,
     order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
-    opened_by UUID NOT NULL REFERENCES public.profiles(id),
+    opened_by UUID REFERENCES public.profiles(id),
     claim_summary TEXT NOT NULL,
     dispute_category TEXT NOT NULL CHECK (dispute_category IN (
         'damaged_goods',
@@ -154,7 +157,7 @@ CREATE TABLE IF NOT EXISTS public.disputes (
 CREATE TABLE IF NOT EXISTS public.dispute_submissions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     dispute_id UUID NOT NULL REFERENCES public.disputes(id) ON DELETE CASCADE,
-    submitted_by UUID NOT NULL REFERENCES public.profiles(id),
+    submitted_by UUID REFERENCES public.profiles(id),
     submission_type TEXT NOT NULL CHECK (submission_type IN ('buyer_rebuttal', 'seller_response', 'reviewer_note', 'evidence_attachment')),
     content TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -190,7 +193,7 @@ CREATE TABLE IF NOT EXISTS public.onchain_transactions (
 CREATE TABLE IF NOT EXISTS public.audit_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     entity_type TEXT NOT NULL,
-    entity_id UUID NOT NULL,
+    entity_id TEXT NOT NULL,
     action TEXT NOT NULL,
     actor_id UUID REFERENCES public.profiles(id),
     metadata JSONB,
@@ -220,36 +223,70 @@ CREATE INDEX IF NOT EXISTS idx_tx_dispute ON public.onchain_transactions(dispute
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agreement_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agreement_acceptances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.disputes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dispute_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.onchain_transactions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own profile" ON public.profiles
-    FOR SELECT USING (auth.uid() = id);
+-- Profiles
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
 
-CREATE POLICY "Users can update own profile" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
-CREATE POLICY "Parties or org members can view orders" ON public.orders
-    FOR SELECT USING (
-        auth.uid() = buyer_id OR
-        auth.uid() = seller_id OR
-        organization_id IN (
-            SELECT organization_id FROM public.organization_members WHERE user_id = auth.uid()
-        )
-    );
+-- Orders
+DROP POLICY IF EXISTS "Enable select for orders" ON public.orders;
+CREATE POLICY "Enable select for orders" ON public.orders FOR SELECT USING (true);
 
-CREATE POLICY "Parties or org members can view evidence" ON public.evidence
-    FOR SELECT USING (
-        submitted_by = auth.uid() OR
-        order_id IN (
-            SELECT id FROM public.orders WHERE buyer_id = auth.uid() OR seller_id = auth.uid()
-        )
-    );
+DROP POLICY IF EXISTS "Enable insert for orders" ON public.orders;
+CREATE POLICY "Enable insert for orders" ON public.orders FOR INSERT WITH CHECK (true);
 
-CREATE POLICY "Parties can view their disputes" ON public.disputes
-    FOR SELECT USING (
-        opened_by = auth.uid() OR
-        order_id IN (
-            SELECT id FROM public.orders WHERE buyer_id = auth.uid() OR seller_id = auth.uid()
-        )
-    );
+DROP POLICY IF EXISTS "Enable update for orders" ON public.orders;
+CREATE POLICY "Enable update for orders" ON public.orders FOR UPDATE USING (true);
+
+-- Agreement Versions
+DROP POLICY IF EXISTS "Enable select for agreement_versions" ON public.agreement_versions;
+CREATE POLICY "Enable select for agreement_versions" ON public.agreement_versions FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Enable insert for agreement_versions" ON public.agreement_versions;
+CREATE POLICY "Enable insert for agreement_versions" ON public.agreement_versions FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Enable update for agreement_versions" ON public.agreement_versions;
+CREATE POLICY "Enable update for agreement_versions" ON public.agreement_versions FOR UPDATE USING (true);
+
+-- Agreement Acceptances
+DROP POLICY IF EXISTS "Enable all for agreement_acceptances" ON public.agreement_acceptances;
+CREATE POLICY "Enable all for agreement_acceptances" ON public.agreement_acceptances FOR ALL USING (true);
+
+-- Evidence
+DROP POLICY IF EXISTS "Enable select for evidence" ON public.evidence;
+CREATE POLICY "Enable select for evidence" ON public.evidence FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Enable insert for evidence" ON public.evidence;
+CREATE POLICY "Enable insert for evidence" ON public.evidence FOR INSERT WITH CHECK (true);
+
+-- Disputes
+DROP POLICY IF EXISTS "Enable select for disputes" ON public.disputes;
+CREATE POLICY "Enable select for disputes" ON public.disputes FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Enable insert for disputes" ON public.disputes;
+CREATE POLICY "Enable insert for disputes" ON public.disputes FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Enable update for disputes" ON public.disputes;
+CREATE POLICY "Enable update for disputes" ON public.disputes FOR UPDATE USING (true);
+
+-- Dispute Submissions
+DROP POLICY IF EXISTS "Enable all for dispute_submissions" ON public.dispute_submissions;
+CREATE POLICY "Enable all for dispute_submissions" ON public.dispute_submissions FOR ALL USING (true);
+
+-- Audit Events
+DROP POLICY IF EXISTS "Enable all for audit_events" ON public.audit_events;
+CREATE POLICY "Enable all for audit_events" ON public.audit_events FOR ALL USING (true);
+
+-- Onchain Transactions
+DROP POLICY IF EXISTS "Enable all for onchain_transactions" ON public.onchain_transactions;
+CREATE POLICY "Enable all for onchain_transactions" ON public.onchain_transactions FOR ALL USING (true);

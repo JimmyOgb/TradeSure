@@ -44,6 +44,12 @@ export async function fetchOrderByIdFromSupabase(orderId: string): Promise<{
   };
 }
 
+function toValidUuidOrNull(val?: string | null): string | null {
+  if (!val) return null;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(val) ? val : null;
+}
+
 export async function insertOrderIntoSupabase(
   newOrder: Order,
   terms: {
@@ -57,17 +63,18 @@ export async function insertOrderIntoSupabase(
   }
 ): Promise<{ order: Order; agreement_id: string }> {
   const supabase = getSupabaseAdmin();
+  const validOrderId = toValidUuidOrNull(newOrder.id) || crypto.randomUUID();
 
   const { data: orderData, error: orderErr } = await supabase
     .from("orders")
     .insert([
       {
-        id: newOrder.id,
+        id: validOrderId,
         order_reference: newOrder.order_reference,
-        organization_id: newOrder.organization_id,
-        buyer_id: newOrder.buyer_id,
+        organization_id: toValidUuidOrNull(newOrder.organization_id),
+        buyer_id: toValidUuidOrNull(newOrder.buyer_id),
         buyer_email: newOrder.buyer_email,
-        seller_id: newOrder.seller_id,
+        seller_id: toValidUuidOrNull(newOrder.seller_id),
         seller_email: newOrder.seller_email,
         title: newOrder.title,
         currency: newOrder.currency,
@@ -83,11 +90,11 @@ export async function insertOrderIntoSupabase(
 
   if (orderErr) throw new Error(`Failed to save order to Supabase: ${orderErr.message}`);
 
-  const agreementId = `agv-${Date.now().toString(36)}-01`;
+  const agreementId = crypto.randomUUID();
   const { error: agErr } = await supabase.from("agreement_versions").insert([
     {
       id: agreementId,
-      order_id: newOrder.id,
+      order_id: validOrderId,
       version_number: 1,
       product_description: terms.product_description,
       quantity: terms.quantity,
@@ -106,13 +113,14 @@ export async function insertOrderIntoSupabase(
   await supabase.from("audit_events").insert([
     {
       entity_type: "order",
-      entity_id: newOrder.id,
+      entity_id: validOrderId,
       action: "ORDER_CREATED",
       metadata: { terms_hash: terms.terms_commitment_hash, order_ref: newOrder.order_reference },
     },
   ]);
 
-  return { order: orderData as Order, agreement_id: agreementId };
+  const persistedOrder = { ...(orderData as Order), id: validOrderId };
+  return { order: persistedOrder, agreement_id: agreementId };
 }
 
 export async function uploadEvidenceToSupabase(params: {
@@ -139,13 +147,13 @@ export async function uploadEvidenceToSupabase(params: {
     });
 
   if (uploadErr && !uploadErr.message.includes("already exists")) {
-    // If bucket does not exist, log guidance but continue metadata insertion
-    console.warn(`Storage upload note: ${uploadErr.message}`);
+    throw new Error(`Failed to upload evidence file to Supabase storage (${EVIDENCE_STORAGE_BUCKET}): ${uploadErr.message}`);
   }
 
   // 2. Insert Evidence Record into Database
+  const validEvidenceId = toValidUuidOrNull(params.evidenceId) || crypto.randomUUID();
   const evidenceRecord: EvidenceItem = {
-    id: params.evidenceId,
+    id: validEvidenceId,
     order_id: params.orderId,
     submitted_by: params.submittedById,
     submitted_by_role: params.submittedByRole,
@@ -160,9 +168,10 @@ export async function uploadEvidenceToSupabase(params: {
 
   const { error: dbErr } = await supabase.from("evidence").insert([
     {
-      id: evidenceRecord.id,
-      order_id: evidenceRecord.order_id,
-      submitted_by: evidenceRecord.submitted_by,
+      id: validEvidenceId,
+      order_id: params.orderId,
+      submitted_by: toValidUuidOrNull(params.submittedById),
+      submitted_by_role: params.submittedByRole,
       evidence_type: evidenceRecord.evidence_type,
       description: evidenceRecord.description,
       storage_path: evidenceRecord.storage_path,
@@ -250,15 +259,16 @@ export async function fetchDisputeByIdFromSupabase(disputeId: string): Promise<{
 
 export async function insertDisputeIntoSupabase(dispute: Dispute): Promise<Dispute> {
   const supabase = getSupabaseAdmin();
+  const validDisputeId = toValidUuidOrNull(dispute.id) || crypto.randomUUID();
 
   const { data, error } = await supabase
     .from("disputes")
     .insert([
       {
-        id: dispute.id,
+        id: validDisputeId,
         dispute_reference: dispute.dispute_reference,
         order_id: dispute.order_id,
-        opened_by: dispute.opened_by,
+        opened_by: toValidUuidOrNull(dispute.opened_by),
         claim_summary: dispute.claim_summary,
         dispute_category: dispute.dispute_category,
         status: dispute.status,
@@ -296,9 +306,10 @@ export async function insertDisputeSubmissionIntoSupabase(
   }
 ): Promise<DisputeSubmission> {
   const supabase = getSupabaseAdmin();
+  const validSubId = toValidUuidOrNull(submission.id) || crypto.randomUUID();
 
   const newSub: DisputeSubmission = {
-    id: submission.id,
+    id: validSubId,
     dispute_id: disputeId,
     submitted_by: submission.submittedBy,
     submitted_by_name: submission.submissionType.includes("seller") ? "Seller Organization" : "Buyer",
@@ -309,9 +320,9 @@ export async function insertDisputeSubmissionIntoSupabase(
 
   const { error } = await supabase.from("dispute_submissions").insert([
     {
-      id: newSub.id,
+      id: validSubId,
       dispute_id: newSub.dispute_id,
-      submitted_by: newSub.submitted_by,
+      submitted_by: toValidUuidOrNull(newSub.submitted_by),
       submission_type: newSub.submission_type,
       content: newSub.content,
       created_at: newSub.created_at,

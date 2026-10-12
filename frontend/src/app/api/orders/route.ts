@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/store";
 import { Order, computeTermsCommitmentHash } from "@/lib/types";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { fetchOrdersFromSupabase, insertOrderIntoSupabase } from "@/lib/supabaseService";
@@ -9,20 +8,15 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const orgId = searchParams.get("organization_id") || undefined;
 
-    if (isSupabaseConfigured()) {
-      const orders = await fetchOrdersFromSupabase(orgId);
-      return NextResponse.json({ orders, storage: "supabase" });
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: "Durable database persistence is unavailable. Supabase credentials must be configured." },
+        { status: 503 }
+      );
     }
 
-    // In-memory fallback with transparent persistence notice
-    const orders = Array.from(db.orders.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-    return NextResponse.json({
-      orders,
-      storage: "in_memory",
-      notice: "Operating with in-memory storage. Configure Supabase credentials for durable multi-tenant persistence.",
-    });
+    const orders = await fetchOrdersFromSupabase(orgId);
+    return NextResponse.json({ orders, storage: "supabase" });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -60,8 +54,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Order total_amount must be a positive number." }, { status: 400 });
     }
 
-    const orderId = `ord-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    const agreementId = `agv-${Date.now().toString(36)}-01`;
+    const orderId = crypto.randomUUID();
+    const agreementId = crypto.randomUUID();
     const orderRef = `TS-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const terms = {
@@ -93,37 +87,19 @@ export async function POST(req: Request) {
       created_at: new Date().toISOString(),
     };
 
-    if (isSupabaseConfigured()) {
-      const result = await insertOrderIntoSupabase(newOrder, {
-        ...terms,
-        terms_commitment_hash: commitmentHash,
-      });
+    if (!isSupabaseConfigured()) {
       return NextResponse.json(
-        { order: result.order, agreement_id: result.agreement_id, storage: "supabase" },
-        { status: 201 }
+        { error: "Durable database persistence is unavailable. Supabase credentials must be configured." },
+        { status: 503 }
       );
     }
 
-    // Persist to local memory store with explicit warning
-    db.orders.set(orderId, newOrder);
-    db.agreements.set(orderId, [
-      {
-        id: agreementId,
-        order_id: orderId,
-        version_number: 1,
-        ...terms,
-        terms_commitment_hash: commitmentHash,
-        created_at: newOrder.created_at,
-      },
-    ]);
-
+    const result = await insertOrderIntoSupabase(newOrder, {
+      ...terms,
+      terms_commitment_hash: commitmentHash,
+    });
     return NextResponse.json(
-      {
-        order: newOrder,
-        agreement_id: agreementId,
-        storage: "in_memory",
-        warning: "Saved to in-memory store. Configure Supabase for durable serverless persistence.",
-      },
+      { order: result.order, agreement_id: result.agreement_id, storage: "supabase" },
       { status: 201 }
     );
   } catch (err: any) {

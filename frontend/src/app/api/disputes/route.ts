@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/store";
 import { Dispute } from "@/lib/types";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import {
@@ -13,19 +12,15 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const orgId = searchParams.get("organization_id") || undefined;
 
-    if (isSupabaseConfigured()) {
-      const disputes = await fetchDisputesFromSupabase(orgId);
-      return NextResponse.json({ disputes, storage: "supabase" });
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: "Durable database persistence is unavailable. Supabase credentials must be configured." },
+        { status: 503 }
+      );
     }
 
-    const disputes = Array.from(db.disputes.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-    return NextResponse.json({
-      disputes,
-      storage: "in_memory",
-      notice: "Disputes operating with in-memory storage.",
-    });
+    const disputes = await fetchDisputesFromSupabase(orgId);
+    return NextResponse.json({ disputes, storage: "supabase" });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -43,32 +38,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const disputeId = `disp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const disputeId = crypto.randomUUID();
     const disputeRef = `DSP-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    if (isSupabaseConfigured()) {
-      const orderData = await fetchOrderByIdFromSupabase(order_id);
-      if (!orderData.order) {
-        return NextResponse.json({ error: "Order not found" }, { status: 404 });
-      }
-
-      const newDispute: Dispute = {
-        id: disputeId,
-        dispute_reference: disputeRef,
-        order_id,
-        opened_by: orderData.order.buyer_id,
-        claim_summary: String(claim_summary).trim(),
-        dispute_category,
-        status: "DISPUTE_OPEN",
-        created_at: new Date().toISOString(),
-      };
-
-      const savedDispute = await insertDisputeIntoSupabase(newDispute);
-      return NextResponse.json({ dispute: savedDispute, storage: "supabase" }, { status: 201 });
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: "Durable database persistence is unavailable. Supabase credentials must be configured." },
+        { status: 503 }
+      );
     }
 
-    const order = db.orders.get(order_id);
-    if (!order) {
+    const orderData = await fetchOrderByIdFromSupabase(order_id);
+    if (!orderData.order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
@@ -76,24 +57,15 @@ export async function POST(req: Request) {
       id: disputeId,
       dispute_reference: disputeRef,
       order_id,
-      opened_by: order.buyer_id,
+      opened_by: orderData.order.buyer_id,
       claim_summary: String(claim_summary).trim(),
       dispute_category,
       status: "DISPUTE_OPEN",
       created_at: new Date().toISOString(),
     };
 
-    db.disputes.set(disputeId, newDispute);
-    order.status = "DISPUTE_OPEN";
-
-    return NextResponse.json(
-      {
-        dispute: newDispute,
-        storage: "in_memory",
-        warning: "Dispute opened in in-memory session. Configure Supabase for durable record keeping.",
-      },
-      { status: 201 }
-    );
+    const savedDispute = await insertDisputeIntoSupabase(newDispute);
+    return NextResponse.json({ dispute: savedDispute, storage: "supabase" }, { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
