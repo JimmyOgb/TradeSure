@@ -28,14 +28,14 @@ async function testDisputeFlow() {
     functionName: "faucet",
     args: [TOTAL_AMOUNT],
   });
-  await readClient.waitForTransactionReceipt({ hash: fTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: fTx, status: "ACCEPTED" });
 
   const aTx = await buyerClient.writeContract({
     address: WETH_ADDRESS,
     functionName: "approve",
     args: [ESCROW_ADDRESS, TOTAL_AMOUNT],
   });
-  await readClient.waitForTransactionReceipt({ hash: aTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: aTx, status: "ACCEPTED" });
 
   // 2. Create and fund escrow
   console.log("\n[2] Creating and funding escrow:", agreementId);
@@ -61,14 +61,14 @@ async function testDisputeFlow() {
       JSON.stringify(milestones),
     ],
   });
-  await readClient.waitForTransactionReceipt({ hash: cTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: cTx, status: "ACCEPTED" });
 
   const dTx = await buyerClient.writeContract({
     address: ESCROW_ADDRESS,
     functionName: "deposit",
     args: [agreementId, TOTAL_AMOUNT],
   });
-  await readClient.waitForTransactionReceipt({ hash: dTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: dTx, status: "ACCEPTED" });
 
   const funded = await readClient.readContract({
     address: ESCROW_ADDRESS,
@@ -106,7 +106,7 @@ async function testDisputeFlow() {
     ],
   });
   console.log("  Register Dispute Tx Hash:", regDisputeTx);
-  await readClient.waitForTransactionReceipt({ hash: regDisputeTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: regDisputeTx, status: "ACCEPTED" });
   console.log("✔ Dispute registered on-chain");
 
   // 4. Open dispute on Escrow Contract to freeze funds
@@ -117,7 +117,7 @@ async function testDisputeFlow() {
     args: [agreementId, "m-1", disputeId],
   });
   console.log("  Open Dispute Tx Hash:", freezeTx);
-  await readClient.waitForTransactionReceipt({ hash: freezeTx, status: "FINALIZED" });
+  await readClient.waitForTransactionReceipt({ hash: freezeTx, status: "ACCEPTED" });
 
   const disputedEscrow = await readClient.readContract({
     address: ESCROW_ADDRESS,
@@ -136,7 +136,7 @@ async function testDisputeFlow() {
     args: [disputeId],
   });
   console.log("  Resolve Dispute Tx Hash:", resolveTx);
-  const resolveReceipt = await readClient.waitForTransactionReceipt({ hash: resolveTx, status: "FINALIZED" });
+  const resolveReceipt = await readClient.waitForTransactionReceipt({ hash: resolveTx, status: "ACCEPTED" });
   console.log("✔ Dispute Consensus Finalized (Result:", resolveReceipt.result_name, ")");
 
   const resolution = await readClient.readContract({
@@ -155,7 +155,7 @@ async function testDisputeFlow() {
     args: [agreementId],
   });
   console.log("  Settle Escrow Tx Hash:", settleTx);
-  const settleReceipt = await readClient.waitForTransactionReceipt({ hash: settleTx, status: "FINALIZED" });
+  const settleReceipt = await readClient.waitForTransactionReceipt({ hash: settleTx, status: "ACCEPTED" });
   console.log("✔ Escrow Settlement Finalized (Result:", settleReceipt.result_name, ")");
 
   const settledEscrow = await readClient.readContract({
