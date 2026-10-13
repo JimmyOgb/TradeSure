@@ -174,7 +174,7 @@ export async function evaluateDisputeOnChain(params: {
       // Wait for confirmed finalization of registration
       const regReceipt = await (client.waitForTransactionReceipt as any)({
         hash: registerTxHash as `0x${string}`,
-        status: "FINALIZED",
+        status: "ACCEPTED",
       });
       const regStatus = String((regReceipt as any)?.statusName || (regReceipt as any)?.status || "");
       if (regStatus.includes("REVERT") || regStatus.includes("FAIL")) {
@@ -190,10 +190,12 @@ export async function evaluateDisputeOnChain(params: {
       value: BigInt(0),
     });
 
-    // Wait for confirmed finalization of resolution
+    // Wait for confirmed consensus execution on StudioNet
+    // In GenLayer StudioNet, transactions reach consensus and transition through ACCEPTED to FINALIZED.
+    // Waiting for ACCEPTED waits for multi-validator voting/execution to finish.
     const resolveReceipt = await (client.waitForTransactionReceipt as any)({
       hash: resolveTxHash,
-      status: "FINALIZED",
+      status: "ACCEPTED",
     });
 
     const resolveReceiptStatus = String(
