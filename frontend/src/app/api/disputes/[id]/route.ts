@@ -73,6 +73,22 @@ export async function POST(
       const data = await fetchDisputeByIdFromSupabase(id);
       if (!data.dispute) return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
 
+      // If already resolved in Supabase, return the persisted authoritative outcome idempotently
+      if (data.dispute.status === "RESOLVED" && data.dispute.outcome) {
+        return NextResponse.json({
+          dispute: data.dispute,
+          evaluation: {
+            success: true,
+            outcome: data.dispute.outcome,
+            rationale: data.dispute.resolution_summary || "Resolved on-chain",
+            txHash: data.dispute.onchain_tx_hash || "",
+            contractAddress: data.dispute.onchain_contract_address || "",
+            consensusStatus: "FINALIZED",
+          },
+          storage: "supabase",
+        });
+      }
+
       const orderId = data.dispute.order_id;
       const buyerId = data.order?.buyer_id || "usr-buyer-01";
       const sellerId = data.order?.seller_id || "usr-seller-01";
@@ -89,7 +105,7 @@ export async function POST(
         description: e.description,
       }));
 
-      // Execute on-chain GenLayer StudioNet transaction
+      // Execute on-chain GenLayer StudioNet transaction and fetch authoritative resolution
       const result = await evaluateDisputeOnChain({
         disputeId: id,
         orderId,
@@ -101,7 +117,13 @@ export async function POST(
         evidenceManifest,
       });
 
-      if (result.success && result.outcome) {
+      if (
+        result.success &&
+        result.outcome &&
+        (result.outcome === "BUYER_SUPPORTED" ||
+          result.outcome === "SELLER_SUPPORTED" ||
+          result.outcome === "INCONCLUSIVE")
+      ) {
         await recordOnChainResolutionInSupabase({
           disputeId: id,
           orderId,
@@ -109,14 +131,25 @@ export async function POST(
           txHash: String(result.txHash),
           contractAddress: String(result.contractAddress),
           rationale: String(result.rationale),
+          status: "FINALIZED",
+          executionResult: {
+            outcome: result.outcome,
+            rationale: result.rationale,
+            evidence_cited: result.evidenceCited,
+            criteria_applied: result.criteriaApplied,
+          },
         });
 
         const updated = await fetchDisputeByIdFromSupabase(id);
         return NextResponse.json({ dispute: updated.dispute, evaluation: result, storage: "supabase" });
       } else {
         return NextResponse.json(
-          { error: result.error || "On-chain GenLayer evaluation failed" },
-          { status: 500 }
+          {
+            error:
+              result.error ||
+              "Authoritative on-chain dispute resolution could not be completed or verified.",
+          },
+          { status: 502 }
         );
       }
     }

@@ -27,9 +27,84 @@ export function getGenLayerClient(privateKey?: `0x${string}`) {
   });
 }
 
+export interface OnChainResolution {
+  dispute_id: string;
+  outcome: "BUYER_SUPPORTED" | "SELLER_SUPPORTED" | "INCONCLUSIVE";
+  rationale: string;
+  limitations?: string;
+  criteria_applied?: string;
+  evidence_cited?: string[];
+  resolved_at_block?: string;
+}
+
+/**
+ * Authoritatively reads and decodes the resolved outcome from the deployed TradeSureDispute contract.
+ * Throws explicit errors if the dispute is unresolved or if the returned data is malformed.
+ */
+export async function getDisputeResolutionOnChain(disputeId: string): Promise<OnChainResolution> {
+  const client = getGenLayerClient();
+  const rawResolution = (await client.readContract({
+    address: TRADESURE_CONTRACT_ADDRESS,
+    functionName: "get_resolution",
+    args: [disputeId],
+  })) as Record<string, unknown> | null;
+
+  if (!rawResolution || typeof rawResolution !== "object") {
+    throw new Error(`Invalid resolution return value for dispute ${disputeId}`);
+  }
+
+  const rawOutcome = String(rawResolution.outcome || "").trim().toUpperCase();
+  if (
+    rawOutcome !== "BUYER_SUPPORTED" &&
+    rawOutcome !== "SELLER_SUPPORTED" &&
+    rawOutcome !== "INCONCLUSIVE"
+  ) {
+    throw new Error(
+      `Unrecognized or invalid outcome '${rawOutcome}' returned by get_resolution for dispute ${disputeId}`
+    );
+  }
+
+  const rationale = String(rawResolution.rationale || "").trim();
+  if (!rationale) {
+    throw new Error(`Contract get_resolution returned empty rationale for dispute ${disputeId}`);
+  }
+
+  const evidenceCited = Array.isArray(rawResolution.evidence_cited)
+    ? (rawResolution.evidence_cited as string[]).map(String)
+    : [];
+
+  return {
+    dispute_id: String(rawResolution.dispute_id || disputeId),
+    outcome: rawOutcome as "BUYER_SUPPORTED" | "SELLER_SUPPORTED" | "INCONCLUSIVE",
+    rationale,
+    limitations: rawResolution.limitations ? String(rawResolution.limitations) : undefined,
+    criteria_applied: rawResolution.criteria_applied ? String(rawResolution.criteria_applied) : undefined,
+    evidence_cited: evidenceCited,
+    resolved_at_block: rawResolution.resolved_at_block ? String(rawResolution.resolved_at_block) : undefined,
+  };
+}
+
+/**
+ * Checks whether a dispute is already registered on-chain.
+ */
+export async function getDisputeOnChain(disputeId: string): Promise<Record<string, unknown> | null> {
+  const client = getGenLayerClient();
+  try {
+    const rawDispute = (await client.readContract({
+      address: TRADESURE_CONTRACT_ADDRESS,
+      functionName: "get_dispute",
+      args: [disputeId],
+    })) as Record<string, unknown> | null;
+    return rawDispute;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Executes authentic on-chain dispute resolution via GenLayer StudioNet.
- * Directly submits writeContract transaction to the deployed contract with required parameters.
+ * Directly submits writeContract transaction to the deployed contract with required parameters,
+ * waits for confirmed finalization, and reads the authoritative resolution.
  */
 export async function evaluateDisputeOnChain(params: {
   disputeId: string;
@@ -60,25 +135,52 @@ export async function evaluateDisputeOnChain(params: {
       : "0x0000000000000000000000000000000000000001";
 
   try {
-    // 1. Submit on-chain registration transaction
-    const registerTxHash = await client.writeContract({
-      address: TRADESURE_CONTRACT_ADDRESS,
-      functionName: "register_dispute",
-      args: [
-        params.disputeId,
-        params.orderId,
-        onchainBuyerId,
-        onchainSellerId,
-        params.agreementHash,
-        params.agreementTerms,
-        params.claimSummary,
-        manifestJson,
-      ],
-      value: BigInt(0),
-    });
+    // Check if the dispute is already registered or resolved on-chain
+    const existingResolution = await getDisputeResolutionOnChain(params.disputeId).catch(() => null);
+    if (existingResolution) {
+      return {
+        success: true,
+        outcome: existingResolution.outcome,
+        rationale: existingResolution.rationale,
+        evidenceCited: existingResolution.evidence_cited || [],
+        criteriaApplied: existingResolution.criteria_applied || "",
+        contractAddress: TRADESURE_CONTRACT_ADDRESS,
+        consensusStatus: "FINALIZED",
+        txHash: "0xALREADY_RESOLVED_ONCHAIN",
+      };
+    }
 
-    // Wait for the on-chain registration receipt
-    const regReceipt = await client.waitForTransactionReceipt({ hash: registerTxHash });
+    const existingDispute = await getDisputeOnChain(params.disputeId);
+    let registerTxHash: string | undefined;
+
+    // 1. Submit on-chain registration transaction only if not registered yet
+    if (!existingDispute) {
+      registerTxHash = await client.writeContract({
+        address: TRADESURE_CONTRACT_ADDRESS,
+        functionName: "register_dispute",
+        args: [
+          params.disputeId,
+          params.orderId,
+          onchainBuyerId,
+          onchainSellerId,
+          params.agreementHash,
+          params.agreementTerms,
+          params.claimSummary,
+          manifestJson,
+        ],
+        value: BigInt(0),
+      });
+
+      // Wait for confirmed finalization of registration
+      const regReceipt = await (client.waitForTransactionReceipt as any)({
+        hash: registerTxHash as `0x${string}`,
+        status: "FINALIZED",
+      });
+      const regStatus = String((regReceipt as any)?.statusName || (regReceipt as any)?.status || "");
+      if (regStatus.includes("REVERT") || regStatus.includes("FAIL")) {
+        throw new Error(`Dispute registration transaction failed on-chain: ${registerTxHash}`);
+      }
+    }
 
     // 2. Submit on-chain consensus resolution transaction
     const resolveTxHash = await client.writeContract({
@@ -88,31 +190,36 @@ export async function evaluateDisputeOnChain(params: {
       value: BigInt(0),
     });
 
-    // Wait for the resolution receipt
-    const resolveReceipt = await client.waitForTransactionReceipt({ hash: resolveTxHash });
+    // Wait for confirmed finalization of resolution
+    const resolveReceipt = await (client.waitForTransactionReceipt as any)({
+      hash: resolveTxHash,
+      status: "FINALIZED",
+    });
 
-    // 3. Read the actual on-chain resolution determined by GenLayer multi-validator consensus
-    const onchainResolution = (await client.readContract({
-      address: TRADESURE_CONTRACT_ADDRESS,
-      functionName: "get_resolution",
-      args: [params.disputeId],
-    })) as any;
+    const resolveReceiptStatus = String(
+      (resolveReceipt as any)?.statusName || (resolveReceipt as any)?.status || ""
+    );
+    if (resolveReceiptStatus.includes("REVERT") || resolveReceiptStatus.includes("FAIL")) {
+      throw new Error(`Dispute resolution transaction failed on-chain: ${resolveTxHash}`);
+    }
 
-    const outcome = onchainResolution?.outcome || "INCONCLUSIVE";
-    const rationale = onchainResolution?.rationale || "Arbitration completed by GenLayer validator consensus.";
-    const evidenceCited = onchainResolution?.evidence_cited || [];
-    const criteriaApplied = onchainResolution?.criteria_applied || "Product condition & delivery criteria";
+    // 3. Read the authoritative on-chain resolution from get_resolution
+    const authoritativeResolution = await getDisputeResolutionOnChain(params.disputeId);
 
     return {
       success: true,
-      outcome,
-      rationale,
+      outcome: authoritativeResolution.outcome,
+      rationale: authoritativeResolution.rationale,
       txHash: resolveTxHash,
       registerTxHash,
       contractAddress: TRADESURE_CONTRACT_ADDRESS,
-      evidenceCited,
-      criteriaApplied,
-      consensusStatus: (resolveReceipt as any).result_name || (resolveReceipt as any).resultName || "FINALIZED",
+      evidenceCited: authoritativeResolution.evidence_cited || [],
+      criteriaApplied: authoritativeResolution.criteria_applied || "",
+      consensusStatus:
+        (resolveReceipt as any)?.result_name ||
+        (resolveReceipt as any)?.resultName ||
+        (resolveReceipt as any)?.statusName ||
+        "FINALIZED",
     };
   } catch (error: any) {
     return {

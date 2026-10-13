@@ -2,11 +2,11 @@ import json
 import pytest
 
 def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_alice, direct_bob):
-    contract = direct_deploy("contracts/tradesure_dispute.py")
     direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/tradesure_dispute.py")
 
     # Verify owner
-    assert str(contract.get_owner()).lower() == str(direct_alice).lower()
+    assert str(contract.get_owner()).lower() == ("0x" + direct_alice.hex()).lower()
     assert contract.get_total_disputes() == 0
 
     # Register dispute as buyer
@@ -17,8 +17,8 @@ def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_a
     contract.register_dispute(
         "disp-1001",
         "ord-501",
-        str(direct_alice),
-        str(direct_bob),
+        "0x" + direct_alice.hex(),
+        "0x" + direct_bob.hex(),
         "0xagreementhash1234567890",
         "Electronics in original packaging, 3-day return policy",
         "Item arrived with cracked screen",
@@ -34,30 +34,33 @@ def test_contract_deployment_and_registration(direct_vm, direct_deploy, direct_a
 def test_dispute_registration_authorization_and_validations(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
     contract = direct_deploy("contracts/tradesure_dispute.py")
     
+    alice_addr = "0x" + direct_alice.hex()
+    bob_addr = "0x" + direct_bob.hex()
+
     # Missing mandatory parameters
     direct_vm.sender = direct_alice
     with direct_vm.expect_revert("[EXPECTED] Missing mandatory dispute fields"):
-        contract.register_dispute("", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+        contract.register_dispute("", "ord-1", alice_addr, bob_addr, "0xhash123456789012", "terms", "claim", "[]")
 
     # Unauthorized party (Charlie is neither owner, buyer, nor seller)
     with direct_vm.prank(direct_charlie):
         with direct_vm.expect_revert("[EXPECTED] Unauthorized dispute registrant:"):
-            contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+            contract.register_dispute("disp-1", "ord-1", "0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222", "0xhash123456789012", "terms", "claim", "[]")
 
     # Invalid short agreement hash
     with direct_vm.expect_revert("[EXPECTED] Invalid agreement hash commitment"):
-        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "short", "terms", "claim", "[]")
+        contract.register_dispute("disp-1", "ord-1", alice_addr, bob_addr, "short", "terms", "claim", "[]")
 
     # Malformed manifest
     with direct_vm.expect_revert("[EXPECTED] Evidence manifest is not valid JSON"):
-        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "{invalid}")
+        contract.register_dispute("disp-1", "ord-1", alice_addr, bob_addr, "0xhash123456789012", "terms", "claim", "{invalid}")
 
     # Register valid dispute
-    contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+    contract.register_dispute("disp-1", "ord-1", alice_addr, bob_addr, "0xhash123456789012", "terms", "claim", "[]")
     
     # Duplicate registration
     with direct_vm.expect_revert("[EXPECTED] Dispute already registered: disp-1"):
-        contract.register_dispute("disp-1", "ord-1", str(direct_alice), str(direct_bob), "0xhash123456789012", "terms", "claim", "[]")
+        contract.register_dispute("disp-1", "ord-1", alice_addr, bob_addr, "0xhash123456789012", "terms", "claim", "[]")
 
 
 def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -77,8 +80,8 @@ def test_resolve_dispute_buyer_supported(direct_vm, direct_deploy, direct_alice,
     contract.register_dispute(
         "disp-buyer-win",
         "ord-701",
-        str(direct_alice),
-        str(direct_bob),
+        "0x" + direct_alice.hex(),
+        "0x" + direct_bob.hex(),
         "0xtermscommitment1234567890",
         "Condition: Brand New, undamaged screen required. Delivery within 5 days.",
         "Buyer claims phone arrived severely cracked on delivery. Seller claims carrier fault.",
@@ -129,8 +132,8 @@ def test_resolve_dispute_seller_supported(direct_vm, direct_deploy, direct_alice
     contract.register_dispute(
         "disp-seller-win",
         "ord-702",
-        str(direct_alice),
-        str(direct_bob),
+        "0x" + direct_alice.hex(),
+        "0x" + direct_bob.hex(),
         "0xtermscommitment1234567890",
         "Delivery to registered address constitutes full fulfillment.",
         "Buyer claims non-receipt. Seller provides carrier proof of delivery with buyer signature.",
@@ -164,8 +167,8 @@ def test_resolve_dispute_inconclusive(direct_vm, direct_deploy, direct_alice, di
     contract.register_dispute(
         "disp-inconclusive",
         "ord-703",
-        str(direct_alice),
-        str(direct_bob),
+        "0x" + direct_alice.hex(),
+        "0x" + direct_bob.hex(),
         "0xtermscommitment1234567890",
         "Specification: Vintage watch authenticity guarantee.",
         "Conflicting unofficial appraisals from non-certified third parties.",

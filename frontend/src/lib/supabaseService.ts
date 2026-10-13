@@ -340,43 +340,72 @@ export async function recordOnChainResolutionInSupabase(params: {
   txHash: string;
   contractAddress: string;
   rationale: string;
+  status?: "FINALIZED" | "PENDING" | "ACCEPTED" | "FAILED";
+  executionResult?: Record<string, any>;
 }): Promise<void> {
   const supabase = getSupabaseAdmin();
   const resolvedAt = new Date().toISOString();
+  const txStatus = params.status || "FINALIZED";
 
-  // 1. Update dispute status & outcome
-  await supabase
+  // Check if dispute is already finalized with an authoritative outcome
+  const { data: existingDispute } = await supabase
     .from("disputes")
-    .update({
-      status: "RESOLVED",
-      outcome: params.outcome,
-      onchain_tx_hash: params.txHash,
-      onchain_contract_address: params.contractAddress,
-      resolution_summary: params.rationale,
-      resolved_at: resolvedAt,
-    })
-    .eq("id", params.disputeId);
+    .select("status, outcome")
+    .eq("id", params.disputeId)
+    .maybeSingle();
 
-  // 2. Update order status
-  await supabase
-    .from("orders")
-    .update({ status: "RESOLVED" })
-    .eq("id", params.orderId);
+  // 1. Update dispute status & outcome (only update outcome/status if not already resolved, or updating with valid authoritative outcome)
+  if (existingDispute?.status !== "RESOLVED" || !existingDispute?.outcome) {
+    await supabase
+      .from("disputes")
+      .update({
+        status: "RESOLVED",
+        outcome: params.outcome,
+        onchain_tx_hash: params.txHash,
+        onchain_contract_address: params.contractAddress,
+        resolution_summary: params.rationale,
+        resolved_at: resolvedAt,
+      })
+      .eq("id", params.disputeId);
 
-  // 3. Insert on-chain transaction log
-  await supabase.from("onchain_transactions").insert([
-    {
-      dispute_id: params.disputeId,
-      network: "studionet",
-      chain_id: "61999",
-      contract_address: params.contractAddress,
-      method: "resolve_dispute",
-      tx_hash: params.txHash,
-      status: "FINALIZED",
-      execution_result: { outcome: params.outcome, rationale: params.rationale },
-      created_at: resolvedAt,
-    },
-  ]);
+    // 2. Update order status
+    await supabase
+      .from("orders")
+      .update({ status: "RESOLVED" })
+      .eq("id", params.orderId);
+  }
+
+  // 3. Upsert on-chain transaction log (idempotent by tx_hash)
+  const { data: existingTx } = await supabase
+    .from("onchain_transactions")
+    .select("id")
+    .eq("tx_hash", params.txHash)
+    .maybeSingle();
+
+  if (existingTx) {
+    await supabase
+      .from("onchain_transactions")
+      .update({
+        status: txStatus,
+        execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
+        updated_at: resolvedAt,
+      })
+      .eq("tx_hash", params.txHash);
+  } else {
+    await supabase.from("onchain_transactions").insert([
+      {
+        dispute_id: params.disputeId,
+        network: "studionet",
+        chain_id: "61999",
+        contract_address: params.contractAddress,
+        method: "resolve_dispute",
+        tx_hash: params.txHash,
+        status: txStatus,
+        execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
+        created_at: resolvedAt,
+      },
+    ]);
+  }
 
   // 4. Audit event log
   await supabase.from("audit_events").insert([
@@ -384,7 +413,7 @@ export async function recordOnChainResolutionInSupabase(params: {
       entity_type: "dispute",
       entity_id: params.disputeId,
       action: "DISPUTE_RESOLVED_ONCHAIN",
-      metadata: { tx_hash: params.txHash, outcome: params.outcome },
+      metadata: { tx_hash: params.txHash, outcome: params.outcome, status: txStatus },
     },
   ]);
 }
