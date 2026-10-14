@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { evaluateDisputeOnChain } from "@/lib/genlayer";
+import {
+  evaluateDisputeOnChain,
+  getDisputeResolutionOnChain,
+  TRADESURE_CONTRACT_ADDRESS,
+} from "@/lib/genlayer";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import {
   fetchDisputeByIdFromSupabase,
@@ -27,6 +31,38 @@ export async function GET(
     if (!data.dispute) {
       return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
     }
+
+    // Synchronize with authoritative on-chain resolution if available
+    try {
+      const onchainRes = await getDisputeResolutionOnChain(id);
+      if (
+        onchainRes &&
+        (data.dispute.status !== "RESOLVED" ||
+          data.dispute.outcome !== onchainRes.outcome ||
+          data.dispute.resolution_summary !== onchainRes.rationale)
+      ) {
+        await recordOnChainResolutionInSupabase({
+          disputeId: id,
+          orderId: data.dispute.order_id,
+          outcome: onchainRes.outcome,
+          txHash: data.dispute.onchain_tx_hash || undefined,
+          contractAddress: TRADESURE_CONTRACT_ADDRESS,
+          rationale: onchainRes.rationale,
+          status: "FINALIZED",
+          executionResult: {
+            outcome: onchainRes.outcome,
+            rationale: onchainRes.rationale,
+            evidence_cited: onchainRes.evidence_cited,
+            criteria_applied: onchainRes.criteria_applied,
+          },
+        });
+        const synced = await fetchDisputeByIdFromSupabase(id);
+        return NextResponse.json({ ...synced, storage: "supabase" });
+      }
+    } catch {
+      // Unresolved disputes on-chain revert as expected; return database state
+    }
+
     return NextResponse.json({ ...data, storage: "supabase" });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -73,17 +109,44 @@ export async function POST(
       const data = await fetchDisputeByIdFromSupabase(id);
       if (!data.dispute) return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
 
-      // If already resolved in Supabase, return the persisted authoritative outcome idempotently
-      if (data.dispute.status === "RESOLVED" && data.dispute.outcome) {
+      // Check if authoritative resolution already exists on-chain
+      let existingOnchainRes = null;
+      try {
+        existingOnchainRes = await getDisputeResolutionOnChain(id);
+      } catch {
+        existingOnchainRes = null;
+      }
+
+      if (existingOnchainRes) {
+        // Persist authoritative on-chain outcome idempotently
+        await recordOnChainResolutionInSupabase({
+          disputeId: id,
+          orderId: data.dispute.order_id,
+          outcome: existingOnchainRes.outcome,
+          txHash: data.dispute.onchain_tx_hash || undefined,
+          contractAddress: TRADESURE_CONTRACT_ADDRESS,
+          rationale: existingOnchainRes.rationale,
+          status: "FINALIZED",
+          executionResult: {
+            outcome: existingOnchainRes.outcome,
+            rationale: existingOnchainRes.rationale,
+            evidence_cited: existingOnchainRes.evidence_cited,
+            criteria_applied: existingOnchainRes.criteria_applied,
+          },
+        });
+
+        const synced = await fetchDisputeByIdFromSupabase(id);
         return NextResponse.json({
-          dispute: data.dispute,
+          dispute: synced.dispute,
           evaluation: {
             success: true,
-            outcome: data.dispute.outcome,
-            rationale: data.dispute.resolution_summary || "Resolved on-chain",
-            txHash: data.dispute.onchain_tx_hash || "",
-            contractAddress: data.dispute.onchain_contract_address || "",
+            outcome: existingOnchainRes.outcome,
+            rationale: existingOnchainRes.rationale,
+            txHash: synced.dispute?.onchain_tx_hash || "",
+            contractAddress: TRADESURE_CONTRACT_ADDRESS,
             consensusStatus: "FINALIZED",
+            evidenceCited: existingOnchainRes.evidence_cited || [],
+            criteriaApplied: existingOnchainRes.criteria_applied || "",
           },
           storage: "supabase",
         });
@@ -115,6 +178,7 @@ export async function POST(
         agreementTerms,
         claimSummary,
         evidenceManifest,
+        existingTxHash: data.dispute.onchain_tx_hash || undefined,
       });
 
       if (
@@ -128,7 +192,7 @@ export async function POST(
           disputeId: id,
           orderId,
           outcome: result.outcome,
-          txHash: String(result.txHash),
+          txHash: result.txHash,
           contractAddress: String(result.contractAddress),
           rationale: String(result.rationale),
           status: "FINALIZED",

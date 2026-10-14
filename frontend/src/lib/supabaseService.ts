@@ -337,7 +337,7 @@ export async function recordOnChainResolutionInSupabase(params: {
   disputeId: string;
   orderId: string;
   outcome: "BUYER_SUPPORTED" | "SELLER_SUPPORTED" | "INCONCLUSIVE";
-  txHash: string;
+  txHash?: string;
   contractAddress: string;
   rationale: string;
   status?: "FINALIZED" | "PENDING" | "ACCEPTED" | "FAILED";
@@ -347,64 +347,86 @@ export async function recordOnChainResolutionInSupabase(params: {
   const resolvedAt = new Date().toISOString();
   const txStatus = params.status || "FINALIZED";
 
-  // Check if dispute is already finalized with an authoritative outcome
-  const { data: existingDispute } = await supabase
-    .from("disputes")
-    .select("status, outcome")
-    .eq("id", params.disputeId)
-    .maybeSingle();
-
-  // 1. Update dispute status & outcome (only update outcome/status if not already resolved, or updating with valid authoritative outcome)
-  if (existingDispute?.status !== "RESOLVED" || !existingDispute?.outcome) {
-    await supabase
-      .from("disputes")
-      .update({
-        status: "RESOLVED",
-        outcome: params.outcome,
-        onchain_tx_hash: params.txHash,
-        onchain_contract_address: params.contractAddress,
-        resolution_summary: params.rationale,
-        resolved_at: resolvedAt,
-      })
-      .eq("id", params.disputeId);
-
-    // 2. Update order status
-    await supabase
-      .from("orders")
-      .update({ status: "RESOLVED" })
-      .eq("id", params.orderId);
+  // Validate authoritative outcome enum
+  if (
+    params.outcome !== "BUYER_SUPPORTED" &&
+    params.outcome !== "SELLER_SUPPORTED" &&
+    params.outcome !== "INCONCLUSIVE"
+  ) {
+    throw new Error(`Refusing to persist invalid outcome: ${params.outcome}`);
   }
 
-  // 3. Upsert on-chain transaction log (idempotent by tx_hash)
-  const { data: existingTx } = await supabase
-    .from("onchain_transactions")
-    .select("id")
-    .eq("tx_hash", params.txHash)
-    .maybeSingle();
+  if (!params.rationale || !String(params.rationale).trim()) {
+    throw new Error("Refusing to persist empty resolution rationale");
+  }
 
-  if (existingTx) {
-    await supabase
+  // 1. Update dispute status & authoritative on-chain outcome
+  const updatePayload: Record<string, any> = {
+    status: "RESOLVED",
+    outcome: params.outcome,
+    onchain_contract_address: params.contractAddress,
+    resolution_summary: String(params.rationale).trim(),
+    resolved_at: resolvedAt,
+  };
+
+  const hasRealTxHash =
+    params.txHash &&
+    typeof params.txHash === "string" &&
+    params.txHash.startsWith("0x") &&
+    params.txHash.length > 20 &&
+    !params.txHash.includes("ALREADY");
+
+  if (hasRealTxHash) {
+    updatePayload.onchain_tx_hash = params.txHash;
+  }
+
+  const { error: dispErr } = await supabase
+    .from("disputes")
+    .update(updatePayload)
+    .eq("id", params.disputeId);
+
+  if (dispErr) {
+    throw new Error(`Failed to update dispute in Supabase: ${dispErr.message}`);
+  }
+
+  // 2. Update order status
+  await supabase
+    .from("orders")
+    .update({ status: "RESOLVED" })
+    .eq("id", params.orderId);
+
+  // 3. Upsert on-chain transaction log (only if real txHash is available)
+  if (hasRealTxHash) {
+    const { data: existingTx } = await supabase
       .from("onchain_transactions")
-      .update({
-        status: txStatus,
-        execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
-        updated_at: resolvedAt,
-      })
-      .eq("tx_hash", params.txHash);
-  } else {
-    await supabase.from("onchain_transactions").insert([
-      {
-        dispute_id: params.disputeId,
-        network: "studionet",
-        chain_id: "61999",
-        contract_address: params.contractAddress,
-        method: "resolve_dispute",
-        tx_hash: params.txHash,
-        status: txStatus,
-        execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
-        created_at: resolvedAt,
-      },
-    ]);
+      .select("id")
+      .eq("tx_hash", params.txHash!)
+      .maybeSingle();
+
+    if (existingTx) {
+      await supabase
+        .from("onchain_transactions")
+        .update({
+          status: txStatus,
+          execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
+          updated_at: resolvedAt,
+        })
+        .eq("tx_hash", params.txHash!);
+    } else {
+      await supabase.from("onchain_transactions").insert([
+        {
+          dispute_id: params.disputeId,
+          network: "studionet",
+          chain_id: "61999",
+          contract_address: params.contractAddress,
+          method: "resolve_dispute",
+          tx_hash: params.txHash!,
+          status: txStatus,
+          execution_result: params.executionResult || { outcome: params.outcome, rationale: params.rationale },
+          created_at: resolvedAt,
+        },
+      ]);
+    }
   }
 
   // 4. Audit event log

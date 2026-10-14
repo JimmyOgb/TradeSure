@@ -120,6 +120,7 @@ export async function evaluateDisputeOnChain(params: {
     sha256: string;
     description: string;
   }>;
+  existingTxHash?: string;
 }) {
   const client = getGenLayerClient();
   const manifestJson = JSON.stringify(params.evidenceManifest);
@@ -146,7 +147,8 @@ export async function evaluateDisputeOnChain(params: {
         criteriaApplied: existingResolution.criteria_applied || "",
         contractAddress: TRADESURE_CONTRACT_ADDRESS,
         consensusStatus: "FINALIZED",
-        txHash: "0xALREADY_RESOLVED_ONCHAIN",
+        txHash: params.existingTxHash || undefined,
+        isExisting: true,
       };
     }
 
