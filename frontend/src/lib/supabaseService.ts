@@ -333,6 +333,16 @@ export async function insertDisputeSubmissionIntoSupabase(
   return newSub;
 }
 
+export interface ResolutionPersistenceReport {
+  disputePersisted: boolean;
+  orderPersisted: boolean;
+  transactionLogged: boolean;
+  auditLogged: boolean;
+  fullyPersisted: boolean;
+  partialPersistence: boolean;
+  persistenceErrors: string[];
+}
+
 export async function recordOnChainResolutionInSupabase(params: {
   disputeId: string;
   orderId: string;
@@ -342,10 +352,11 @@ export async function recordOnChainResolutionInSupabase(params: {
   rationale: string;
   status?: "FINALIZED" | "PENDING" | "ACCEPTED" | "FAILED";
   executionResult?: Record<string, any>;
-}): Promise<void> {
+}): Promise<ResolutionPersistenceReport> {
   const supabase = getSupabaseAdmin();
   const resolvedAt = new Date().toISOString();
   const txStatus = params.status || "FINALIZED";
+  const persistenceErrors: string[] = [];
 
   // Validate authoritative outcome enum
   if (
@@ -360,7 +371,7 @@ export async function recordOnChainResolutionInSupabase(params: {
     throw new Error("Refusing to persist empty resolution rationale");
   }
 
-  // 1. Update dispute status & authoritative on-chain outcome
+  // 1. Update dispute status & authoritative on-chain outcome (primary record)
   const updatePayload: Record<string, any> = {
     status: "RESOLVED",
     outcome: params.outcome,
@@ -390,15 +401,20 @@ export async function recordOnChainResolutionInSupabase(params: {
   }
 
   // 2. Update order status
+  let orderPersisted = false;
   const { error: ordErr } = await supabase
     .from("orders")
     .update({ status: "RESOLVED" })
     .eq("id", params.orderId);
   if (ordErr) {
     console.error("Failed to update order status in Supabase:", ordErr.message);
+    persistenceErrors.push(`Failed to update order status: ${ordErr.message}`);
+  } else {
+    orderPersisted = true;
   }
 
   // 3. Upsert on-chain transaction log (only if real txHash is available)
+  let transactionLogged = false;
   if (hasRealTxHash) {
     const { data: existingTx, error: selErr } = await supabase
       .from("onchain_transactions")
@@ -421,6 +437,9 @@ export async function recordOnChainResolutionInSupabase(params: {
         .eq("tx_hash", params.txHash!);
       if (txUpdErr) {
         console.error("Failed to update onchain_transactions in Supabase:", txUpdErr.message);
+        persistenceErrors.push(`Failed to update onchain_transactions: ${txUpdErr.message}`);
+      } else {
+        transactionLogged = true;
       }
     } else {
       const { error: txInsErr } = await supabase.from("onchain_transactions").insert([
@@ -438,11 +457,15 @@ export async function recordOnChainResolutionInSupabase(params: {
       ]);
       if (txInsErr) {
         console.error("Failed to insert into onchain_transactions in Supabase:", txInsErr.message);
+        persistenceErrors.push(`Failed to insert into onchain_transactions: ${txInsErr.message}`);
+      } else {
+        transactionLogged = true;
       }
     }
   }
 
   // 4. Audit event log
+  let auditLogged = false;
   const { error: auditErr } = await supabase.from("audit_events").insert([
     {
       entity_type: "dispute",
@@ -453,5 +476,19 @@ export async function recordOnChainResolutionInSupabase(params: {
   ]);
   if (auditErr) {
     console.error("Failed to insert audit event in Supabase:", auditErr.message);
+    persistenceErrors.push(`Failed to insert audit event: ${auditErr.message}`);
+  } else {
+    auditLogged = true;
   }
+
+  const partialPersistence = persistenceErrors.length > 0;
+  return {
+    disputePersisted: true,
+    orderPersisted,
+    transactionLogged,
+    auditLogged,
+    fullyPersisted: !partialPersistence,
+    partialPersistence,
+    persistenceErrors,
+  };
 }

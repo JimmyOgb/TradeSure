@@ -227,7 +227,7 @@ export async function POST(
         const authoritativeTxHash =
           result.txHash || data.dispute.onchain_tx_hash || undefined;
 
-        await recordOnChainResolutionInSupabase({
+        const persistenceReport = await recordOnChainResolutionInSupabase({
           disputeId: id,
           orderId,
           outcome: result.outcome,
@@ -252,6 +252,7 @@ export async function POST(
             txHash: verifiedTxHash,
           },
           storage: "supabase",
+          persistence: persistenceReport,
         });
       } else {
         return NextResponse.json(
