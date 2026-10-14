@@ -191,13 +191,13 @@ export async function POST(
         evidenceManifest,
         existingTxHash: data.dispute.onchain_tx_hash || undefined,
         onTransactionBroadcast: async (txHash) => {
-          try {
-            await getSupabaseAdmin()
-              .from("disputes")
-              .update({ onchain_tx_hash: txHash })
-              .eq("id", id);
-          } catch (e) {
-            console.warn("Could not immediately persist broadcasted txHash:", e);
+          const { error: broadcastErr } = await getSupabaseAdmin()
+            .from("disputes")
+            .update({ onchain_tx_hash: txHash })
+            .eq("id", id);
+          if (broadcastErr) {
+            console.error("Supabase failed to persist broadcast txHash:", broadcastErr.message);
+            throw new Error(`Failed to persist broadcast txHash to database: ${broadcastErr.message}`);
           }
         },
       });
@@ -205,11 +205,16 @@ export async function POST(
       // Preserve actual resolution transaction hash if one was broadcast even if receipt verification threw
       if (!result.success && result.txHash) {
         try {
-          await getSupabaseAdmin()
+          const { error: fallbackErr } = await getSupabaseAdmin()
             .from("disputes")
             .update({ onchain_tx_hash: result.txHash })
             .eq("id", id);
-        } catch {}
+          if (fallbackErr) {
+            console.error("Supabase failed to persist fallback txHash:", fallbackErr.message);
+          }
+        } catch (e: any) {
+          console.error("Exception updating dispute with fallback txHash:", e.message || e);
+        }
       }
 
       if (
@@ -239,7 +244,15 @@ export async function POST(
         });
 
         const updated = await fetchDisputeByIdFromSupabase(id);
-        return NextResponse.json({ dispute: updated.dispute, evaluation: result, storage: "supabase" });
+        const verifiedTxHash = updated.dispute?.onchain_tx_hash || null;
+        return NextResponse.json({
+          dispute: updated.dispute,
+          evaluation: {
+            ...result,
+            txHash: verifiedTxHash,
+          },
+          storage: "supabase",
+        });
       } else {
         return NextResponse.json(
           {

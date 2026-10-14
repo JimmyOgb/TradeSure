@@ -116,8 +116,37 @@ export function isConfirmedUnresolvedError(err: any): boolean {
 }
 
 /**
+ * Helper to distinguish a confirmed nonexistent dispute from RPC / transport errors.
+ * Reverts from get_dispute when a dispute is not registered explicitly return "[EXPECTED] Dispute not found".
+ */
+export function isConfirmedNonexistentDisputeError(err: any): boolean {
+  if (!err) return false;
+  const rawStrings: string[] = [
+    String(err.message || ""),
+    String(err.shortMessage || ""),
+    String(err.details || ""),
+    String(err.cause?.message || ""),
+    String(err.cause?.data?.receipt?.result || ""),
+  ];
+
+  const rawResult = err.cause?.data?.receipt?.result;
+  if (typeof rawResult === "string") {
+    try {
+      const decoded = Buffer.from(rawResult, "base64").toString("utf8");
+      rawStrings.push(decoded);
+    } catch {
+      // ignore
+    }
+  }
+
+  const combined = rawStrings.join(" ");
+  return combined.includes("Dispute not found");
+}
+
+/**
  * Validates that a GenLayer StudioNet transaction receipt exhibits genuine protocol-level finalization.
  * Rejects missing, pending, accepted-only, and failed receipts without fallback defaults.
+ * Under official StudioNet receipt schema, either numeric status: 7 or status_name: "FINALIZED" establishes genuine finalization.
  */
 export function verifyReceiptFinalized(
   receipt: any,
@@ -174,7 +203,9 @@ export function verifyReceiptFinalized(
     );
   }
 
-  // Must strictly be FINALIZED (status 7 or status_name === "FINALIZED")
+  // Under GenLayer StudioNet receipt schema (TransactionStatus enum in genlayer-js):
+  // Status 7 = FINALIZED, with documented string status_name = "FINALIZED".
+  // Either status: 7 or status_name: "FINALIZED" establishes genuine protocol finalization.
   const isFinalized = statusName === "FINALIZED" || rawStatus === 7;
   if (!isFinalized) {
     throw new Error(
@@ -190,6 +221,8 @@ export function verifyReceiptFinalized(
 
 /**
  * Checks whether a dispute is already registered on-chain.
+ * Distinguishes a confirmed nonexistent dispute from RPC failures.
+ * Throws on RPC/network errors so a transient read failure cannot trigger an unnecessary registration transaction.
  */
 export async function getDisputeOnChain(disputeId: string): Promise<Record<string, unknown> | null> {
   const client = getGenLayerClient();
@@ -200,8 +233,13 @@ export async function getDisputeOnChain(disputeId: string): Promise<Record<strin
       args: [disputeId],
     })) as Record<string, unknown> | null;
     return rawDispute;
-  } catch {
-    return null;
+  } catch (err: any) {
+    if (isConfirmedNonexistentDisputeError(err)) {
+      return null;
+    }
+    throw new Error(
+      `RPC failure querying on-chain dispute ${disputeId}: ${err.message || err}. Aborting registration check to prevent duplicate transaction.`
+    );
   }
 }
 

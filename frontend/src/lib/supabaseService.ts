@@ -390,21 +390,28 @@ export async function recordOnChainResolutionInSupabase(params: {
   }
 
   // 2. Update order status
-  await supabase
+  const { error: ordErr } = await supabase
     .from("orders")
     .update({ status: "RESOLVED" })
     .eq("id", params.orderId);
+  if (ordErr) {
+    console.error("Failed to update order status in Supabase:", ordErr.message);
+  }
 
   // 3. Upsert on-chain transaction log (only if real txHash is available)
   if (hasRealTxHash) {
-    const { data: existingTx } = await supabase
+    const { data: existingTx, error: selErr } = await supabase
       .from("onchain_transactions")
       .select("id")
       .eq("tx_hash", params.txHash!)
       .maybeSingle();
 
+    if (selErr) {
+      console.warn("Could not query onchain_transactions row:", selErr.message);
+    }
+
     if (existingTx) {
-      await supabase
+      const { error: txUpdErr } = await supabase
         .from("onchain_transactions")
         .update({
           status: txStatus,
@@ -412,8 +419,11 @@ export async function recordOnChainResolutionInSupabase(params: {
           updated_at: resolvedAt,
         })
         .eq("tx_hash", params.txHash!);
+      if (txUpdErr) {
+        console.error("Failed to update onchain_transactions in Supabase:", txUpdErr.message);
+      }
     } else {
-      await supabase.from("onchain_transactions").insert([
+      const { error: txInsErr } = await supabase.from("onchain_transactions").insert([
         {
           dispute_id: params.disputeId,
           network: "studionet",
@@ -426,11 +436,14 @@ export async function recordOnChainResolutionInSupabase(params: {
           created_at: resolvedAt,
         },
       ]);
+      if (txInsErr) {
+        console.error("Failed to insert into onchain_transactions in Supabase:", txInsErr.message);
+      }
     }
   }
 
   // 4. Audit event log
-  await supabase.from("audit_events").insert([
+  const { error: auditErr } = await supabase.from("audit_events").insert([
     {
       entity_type: "dispute",
       entity_id: params.disputeId,
@@ -438,4 +451,7 @@ export async function recordOnChainResolutionInSupabase(params: {
       metadata: { tx_hash: params.txHash, outcome: params.outcome, status: txStatus },
     },
   ]);
+  if (auditErr) {
+    console.error("Failed to insert audit event in Supabase:", auditErr.message);
+  }
 }

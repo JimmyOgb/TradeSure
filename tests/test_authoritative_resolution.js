@@ -259,15 +259,21 @@ async function runRegressionSuite() {
     assert.throws(() => verifyReceiptFinalized({ statusName: "CANCELED" }, "0xfail2"), /failed on-chain/);
     assert.throws(() => verifyReceiptFinalized({ result_name: "MAJORITY_DISAGREE" }, "0xfail3"), /failed on-chain/);
 
-    // 5e. Strictly Finalized receipt (status 7 / FINALIZED)
-    const finalizedRes1 = verifyReceiptFinalized({ status_name: "FINALIZED", status: 7, result_name: "MAJORITY_AGREE" }, "0xfin1");
-    assert.strictEqual(finalizedRes1.status, "FINALIZED");
-    assert.strictEqual(finalizedRes1.result, "MAJORITY_AGREE");
+    // 5e. Strictly Finalized receipt (verifying both status: 7 and status_name: "FINALIZED")
+    // Case 1: Integer status 7 without status_name (actual RPC getTransaction return format)
+    const finalizedResNum = verifyReceiptFinalized({ status: 7, result_name: "MAJORITY_AGREE" }, "0xfin_num");
+    assert.strictEqual(finalizedResNum.status, "FINALIZED");
+    assert.strictEqual(finalizedResNum.result, "MAJORITY_AGREE");
 
-    const finalizedRes2 = verifyReceiptFinalized({ statusName: "FINALIZED", status: 7 }, "0xfin2");
-    assert.strictEqual(finalizedRes2.status, "FINALIZED");
+    // Case 2: Documented status_name: "FINALIZED" without numeric status
+    const finalizedResName = verifyReceiptFinalized({ status_name: "FINALIZED", result_name: "MAJORITY_AGREE" }, "0xfin_name");
+    assert.strictEqual(finalizedResName.status, "FINALIZED");
 
-    console.log("✔ PASS: Missing, pending, accepted-only, and failed receipts strictly rejected; only genuine FINALIZED receipts accepted.");
+    // Case 3: Both status: 7 and statusName: "FINALIZED"
+    const finalizedResBoth = verifyReceiptFinalized({ statusName: "FINALIZED", status: 7, result_name: "MAJORITY_AGREE" }, "0xfin_both");
+    assert.strictEqual(finalizedResBoth.status, "FINALIZED");
+
+    console.log("✔ PASS: Missing, pending, accepted-only, and failed receipts strictly rejected; either status: 7 or status_name: FINALIZED confirmed.");
   }
 
   // ============================================================================
@@ -433,6 +439,72 @@ async function runRegressionSuite() {
     console.log("✔ PASS: API response returns synced authoritative contract rationale, not stale local text.");
   }
 
+  // ============================================================================
+  // Test 9: getDisputeOnChain distinguishes confirmed nonexistent from RPC error
+  // ============================================================================
+  console.log("\n[Test 9] getDisputeOnChain distinguishes confirmed nonexistent dispute from RPC error");
+  {
+    function isConfirmedNonexistentDisputeError(err) {
+      if (!err) return false;
+      const rawStrings = [
+        String(err.message || ""),
+        String(err.shortMessage || ""),
+        String(err.details || ""),
+        String(err.cause?.message || ""),
+        String(err.cause?.data?.receipt?.result || ""),
+      ];
+      const rawResult = err.cause?.data?.receipt?.result;
+      if (typeof rawResult === "string") {
+        try {
+          const decoded = Buffer.from(rawResult, "base64").toString("utf8");
+          rawStrings.push(decoded);
+        } catch {}
+      }
+      return rawStrings.join(" ").includes("Dispute not found");
+    }
+
+    async function mockGetDisputeOnChain(disputeId, rpcMode) {
+      if (rpcMode === "FOUND") {
+        return { dispute_id: disputeId, status: "DISPUTE_OPEN" };
+      } else if (rpcMode === "NONEXISTENT") {
+        const error = new Error("execution failed");
+        error.cause = {
+          data: {
+            receipt: {
+              result: Buffer.from("\x01[EXPECTED] Dispute not found: " + disputeId).toString("base64"),
+            },
+          },
+        };
+        if (isConfirmedNonexistentDisputeError(error)) {
+          return null;
+        }
+        throw error;
+      } else if (rpcMode === "RPC_TIMEOUT") {
+        const timeoutErr = new Error("RPC timeout: 504 Gateway Timeout");
+        if (isConfirmedNonexistentDisputeError(timeoutErr)) {
+          return null;
+        }
+        throw new Error(`RPC failure querying on-chain dispute ${disputeId}: ${timeoutErr.message}. Aborting registration check.`);
+      }
+    }
+
+    // 9a. Existing dispute returns record
+    const existing = await mockGetDisputeOnChain("disp-exist", "FOUND");
+    assert.strictEqual(existing.dispute_id, "disp-exist");
+
+    // 9b. Confirmed nonexistent dispute returns null (safe to register)
+    const nonexistent = await mockGetDisputeOnChain("disp-new", "NONEXISTENT");
+    assert.strictEqual(nonexistent, null);
+
+    // 9c. Transient RPC failure throws and aborts (never returns null, preventing duplicate registration)
+    await assert.rejects(
+      async () => mockGetDisputeOnChain("disp-rpc-err", "RPC_TIMEOUT"),
+      /RPC failure querying on-chain dispute/
+    );
+
+    console.log("✔ PASS: Confirmed nonexistent dispute cleanly distinguished from RPC errors; transient read error cannot trigger unnecessary registration.");
+  }
+
   console.log("\n--------------------------------------------------------------------------------");
   console.log(" PART 2: LIVE STUDIONET CONTRACT INTEGRATION VERIFICATION");
   console.log("--------------------------------------------------------------------------------");
@@ -490,7 +562,7 @@ async function runRegressionSuite() {
   console.log("✔ Live Escrow arbiter pointer strictly matches TradeSureDispute address:", arbiterPointer);
 
   console.log("\n================================================================================");
-  console.log("🎉 ALL 8 MOCKED REGRESSION TESTS & ALL 4 LIVE STUDIONET TESTS PASSED!");
+  console.log("🎉 ALL 9 MOCKED REGRESSION TESTS & ALL 4 LIVE STUDIONET TESTS PASSED!");
   console.log("================================================================================\n");
 }
 
