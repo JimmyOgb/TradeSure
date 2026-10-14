@@ -85,6 +85,110 @@ export async function getDisputeResolutionOnChain(disputeId: string): Promise<On
 }
 
 /**
+ * Helper to distinguish confirmed unresolved contract state from RPC / transport errors.
+ * Reverts from get_resolution when a dispute is unresolved explicitly return "[EXPECTED] Dispute not yet resolved".
+ */
+export function isConfirmedUnresolvedError(err: any): boolean {
+  if (!err) return false;
+  const rawStrings: string[] = [
+    String(err.message || ""),
+    String(err.shortMessage || ""),
+    String(err.details || ""),
+    String(err.cause?.message || ""),
+    String(err.cause?.data?.receipt?.result || ""),
+  ];
+
+  const rawResult = err.cause?.data?.receipt?.result;
+  if (typeof rawResult === "string") {
+    try {
+      const decoded = Buffer.from(rawResult, "base64").toString("utf8");
+      rawStrings.push(decoded);
+    } catch {
+      // ignore
+    }
+  }
+
+  const combined = rawStrings.join(" ");
+  return (
+    combined.includes("Dispute not yet resolved") ||
+    combined.includes("Dispute not found")
+  );
+}
+
+/**
+ * Validates that a GenLayer StudioNet transaction receipt exhibits genuine protocol-level finalization.
+ * Rejects missing, pending, accepted-only, and failed receipts without fallback defaults.
+ */
+export function verifyReceiptFinalized(
+  receipt: any,
+  txHash: string
+): { status: string; result: string } {
+  if (!receipt || typeof receipt !== "object") {
+    throw new Error(`Receipt missing or unconfirmed for transaction: ${txHash}`);
+  }
+
+  const rawStatus = receipt.status;
+  const statusName = String(
+    receipt.status_name || receipt.statusName || ""
+  ).toUpperCase();
+
+  const resultName = String(
+    receipt.result_name || receipt.resultName || ""
+  ).toUpperCase();
+
+  // Failed states
+  if (
+    statusName.includes("REVERT") ||
+    statusName.includes("FAIL") ||
+    statusName === "CANCELED" ||
+    statusName === "LEADER_TIMEOUT" ||
+    statusName === "VALIDATORS_TIMEOUT" ||
+    resultName.includes("DISAGREE") ||
+    resultName.includes("FAILURE")
+  ) {
+    throw new Error(
+      `Dispute resolution transaction failed on-chain: ${txHash} (${statusName || resultName || "FAILED"})`
+    );
+  }
+
+  // Pending states (status 1-4)
+  if (
+    statusName === "PENDING" ||
+    statusName === "PROPOSING" ||
+    statusName === "COMMITTING" ||
+    statusName === "REVEALING" ||
+    rawStatus === 1 ||
+    rawStatus === 2 ||
+    rawStatus === 3 ||
+    rawStatus === 4
+  ) {
+    throw new Error(
+      `Dispute resolution transaction is still pending consensus: ${txHash} (status: ${statusName || rawStatus})`
+    );
+  }
+
+  // Accepted-only state (status 5) is NOT finalized into a block
+  if (statusName === "ACCEPTED" || rawStatus === 5) {
+    throw new Error(
+      `Dispute resolution transaction is ACCEPTED by validators but not yet FINALIZED into a StudioNet block: ${txHash}. Awaiting protocol finalization.`
+    );
+  }
+
+  // Must strictly be FINALIZED (status 7 or status_name === "FINALIZED")
+  const isFinalized = statusName === "FINALIZED" || rawStatus === 7;
+  if (!isFinalized) {
+    throw new Error(
+      `Dispute resolution transaction lacks genuine finalization evidence on StudioNet: ${txHash} (status: ${statusName || rawStatus || "UNKNOWN"}).`
+    );
+  }
+
+  return {
+    status: "FINALIZED",
+    result: resultName || "FINALIZED",
+  };
+}
+
+/**
  * Checks whether a dispute is already registered on-chain.
  */
 export async function getDisputeOnChain(disputeId: string): Promise<Record<string, unknown> | null> {
@@ -136,9 +240,31 @@ export async function evaluateDisputeOnChain(params: {
       : "0x0000000000000000000000000000000000000001";
 
   try {
-    // Check if the dispute is already registered or resolved on-chain
-    const existingResolution = await getDisputeResolutionOnChain(params.disputeId).catch(() => null);
-    if (existingResolution) {
+    // 1. If an actual resolution transaction hash already exists, safely wait for its finalization and persist
+    if (params.existingTxHash && params.existingTxHash.startsWith("0x") && !params.existingTxHash.includes("ALREADY")) {
+      const receipt = await (client.waitForTransactionReceipt as any)({
+        hash: params.existingTxHash as `0x${string}`,
+        status: "FINALIZED",
+      });
+      const finalization = verifyReceiptFinalized(receipt, params.existingTxHash);
+      const res = await getDisputeResolutionOnChain(params.disputeId);
+      return {
+        success: true,
+        outcome: res.outcome,
+        rationale: res.rationale,
+        evidenceCited: res.evidence_cited || [],
+        criteriaApplied: res.criteria_applied || "",
+        contractAddress: TRADESURE_CONTRACT_ADDRESS,
+        consensusStatus: finalization.status,
+        consensusResult: finalization.result,
+        txHash: params.existingTxHash,
+        isExisting: true,
+      };
+    }
+
+    // 2. Check on-chain resolution state, distinguishing confirmed unresolved from RPC errors
+    try {
+      const existingResolution = await getDisputeResolutionOnChain(params.disputeId);
       return {
         success: true,
         outcome: existingResolution.outcome,
@@ -150,12 +276,20 @@ export async function evaluateDisputeOnChain(params: {
         txHash: params.existingTxHash || undefined,
         isExisting: true,
       };
+    } catch (err: any) {
+      if (!isConfirmedUnresolvedError(err)) {
+        // Never submit another resolve_dispute transaction merely because an on-chain read failed
+        throw new Error(
+          `RPC error querying on-chain resolution for dispute ${params.disputeId}: ${err.message}. Aborting to prevent duplicate resolution submission.`
+        );
+      }
+      // Confirmed unresolved on-chain; proceed with resolution pipeline
     }
 
     const existingDispute = await getDisputeOnChain(params.disputeId);
     let registerTxHash: string | undefined;
 
-    // 1. Submit on-chain registration transaction only if not registered yet
+    // 3. Submit on-chain registration transaction only if not registered yet
     if (!existingDispute) {
       registerTxHash = await client.writeContract({
         address: TRADESURE_CONTRACT_ADDRESS,
@@ -173,7 +307,7 @@ export async function evaluateDisputeOnChain(params: {
         value: BigInt(0),
       });
 
-      // Wait for confirmed finalization of registration
+      // Wait for confirmed acceptance of registration
       const regReceipt = await (client.waitForTransactionReceipt as any)({
         hash: registerTxHash as `0x${string}`,
         status: "ACCEPTED",
@@ -184,7 +318,7 @@ export async function evaluateDisputeOnChain(params: {
       }
     }
 
-    // 2. Submit on-chain consensus resolution transaction
+    // 4. Submit on-chain consensus resolution transaction
     const resolveTxHash = await client.writeContract({
       address: TRADESURE_CONTRACT_ADDRESS,
       functionName: "resolve_dispute",
@@ -192,22 +326,16 @@ export async function evaluateDisputeOnChain(params: {
       value: BigInt(0),
     });
 
-    // Wait for confirmed consensus execution on StudioNet
-    // In GenLayer StudioNet, transactions reach consensus and transition through ACCEPTED to FINALIZED.
-    // Waiting for ACCEPTED waits for multi-validator voting/execution to finish.
+    // Wait for protocol-confirmed FINALIZED execution state on StudioNet
     const resolveReceipt = await (client.waitForTransactionReceipt as any)({
       hash: resolveTxHash,
-      status: "ACCEPTED",
+      status: "FINALIZED",
     });
 
-    const resolveReceiptStatus = String(
-      (resolveReceipt as any)?.statusName || (resolveReceipt as any)?.status || ""
-    );
-    if (resolveReceiptStatus.includes("REVERT") || resolveReceiptStatus.includes("FAIL")) {
-      throw new Error(`Dispute resolution transaction failed on-chain: ${resolveTxHash}`);
-    }
+    // Strictly verify genuine finalization evidence without default fallbacks
+    const finalizationInfo = verifyReceiptFinalized(resolveReceipt, resolveTxHash);
 
-    // 3. Read the authoritative on-chain resolution from get_resolution
+    // 5. Read the authoritative on-chain resolution from get_resolution
     const authoritativeResolution = await getDisputeResolutionOnChain(params.disputeId);
 
     return {
@@ -219,11 +347,8 @@ export async function evaluateDisputeOnChain(params: {
       contractAddress: TRADESURE_CONTRACT_ADDRESS,
       evidenceCited: authoritativeResolution.evidence_cited || [],
       criteriaApplied: authoritativeResolution.criteria_applied || "",
-      consensusStatus:
-        (resolveReceipt as any)?.result_name ||
-        (resolveReceipt as any)?.resultName ||
-        (resolveReceipt as any)?.statusName ||
-        "FINALIZED",
+      consensusStatus: finalizationInfo.status,
+      consensusResult: finalizationInfo.result,
     };
   } catch (error: any) {
     return {

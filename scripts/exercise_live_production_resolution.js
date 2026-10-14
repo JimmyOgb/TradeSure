@@ -71,18 +71,24 @@ async function runLiveVerification() {
   });
   console.log("✔ Agreement accepted by buyer and seller.");
 
-  // Step 3: Upload Evidence
-  console.log("\n[Step 3] Uploading verified laboratory inspection evidence...");
+  // Step 3: Upload Evidence (Clearly labeled as synthetic test evidence)
+  console.log("\n[Step 3] Uploading synthetic test evidence for pipeline verification...");
+  console.log("ℹ NOTE: Uploaded artifact is explicitly synthetic test evidence for pipeline verification; does NOT claim a real-world ultrasound inspection took place.");
   const formData = new FormData();
   formData.append("order_id", orderId);
   formData.append("submitted_by_role", "buyer");
   formData.append("evidence_type", "product_condition_photo");
   formData.append(
     "description",
-    "Laboratory ultrasound scan reveals deep internal micro-fractures violating agreed zero-fracture term."
+    "[SYNTHETIC TEST EVIDENCE FOR PIPELINE VERIFICATION] Simulated ultrasound inspection record documenting internal micro-fractures exceeding agreed zero-fracture condition."
   );
-  const fakeFile = new Blob(["VERIFIED_ULTRASOUND_IMAGE_DATA_FRACTURE_CONFIRMED"], { type: "text/plain" });
-  formData.append("file", fakeFile, "ultrasound_defect_scan.txt");
+  const syntheticEvidenceFile = new Blob(
+    [
+      "[SYNTHETIC_TEST_FIXTURE] Lab scan simulation: titanium casing unit #3 crack depth 0.12mm (tolerance: zero). Generated strictly for TradeSure on-chain consensus pipeline verification."
+    ],
+    { type: "text/plain" }
+  );
+  formData.append("file", syntheticEvidenceFile, "synthetic_ultrasound_test_evidence.txt");
 
   const evRes = await fetch(`${PROD_URL}/api/evidence`, {
     method: "POST",
@@ -90,7 +96,7 @@ async function runLiveVerification() {
   });
   const evData = await evRes.json();
   assert(evRes.ok, `Evidence upload failed: ${JSON.stringify(evData)}`);
-  console.log(`✔ Evidence uploaded: ID=${evData.evidence.id}, SHA256=${evData.evidence.file_bytes_sha256}`);
+  console.log(`✔ Synthetic evidence uploaded: ID=${evData.evidence.id}, SHA256=${evData.evidence.file_bytes_sha256}`);
 
   // Step 4: Open Dispute
   console.log("\n[Step 4] Opening dispute on production...");

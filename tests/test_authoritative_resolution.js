@@ -189,68 +189,164 @@ async function runRegressionSuite() {
   }
 
   // ============================================================================
-  // Test 5: An unfinalized or failed resolution transaction never becomes a successful final verdict
+  // Test 5: Require genuine finalization evidence - receipts validation
   // ============================================================================
-  console.log("\n[Test 5] Unfinalized or failed resolution transaction never becomes a final verdict");
+  console.log("\n[Test 5] Require genuine finalization evidence (missing, pending, accepted-only, failed, finalized)");
   {
-    function processTransactionReceipt(receipt) {
-      const statusName = String(receipt?.statusName || receipt?.status || "");
-      if (statusName.includes("REVERT") || statusName.includes("FAIL") || statusName === "0") {
-        throw new Error(`Dispute resolution transaction failed on-chain: ${receipt.hash}`);
+    function verifyReceiptFinalized(receipt, txHash) {
+      if (!receipt || typeof receipt !== "object") {
+        throw new Error(`Receipt missing or unconfirmed for transaction: ${txHash}`);
       }
-      if (statusName !== "ACCEPTED" && statusName !== "FINALIZED" && statusName !== "1") {
-        throw new Error(`Dispute resolution transaction not yet finalized: status ${statusName}`);
+      const rawStatus = receipt.status;
+      const statusName = String(receipt.status_name || receipt.statusName || "").toUpperCase();
+      const resultName = String(receipt.result_name || receipt.resultName || "").toUpperCase();
+
+      if (
+        statusName.includes("REVERT") ||
+        statusName.includes("FAIL") ||
+        statusName === "CANCELED" ||
+        statusName === "LEADER_TIMEOUT" ||
+        statusName === "VALIDATORS_TIMEOUT" ||
+        resultName.includes("DISAGREE") ||
+        resultName.includes("FAILURE")
+      ) {
+        throw new Error(`Dispute resolution transaction failed on-chain: ${txHash} (${statusName || resultName || "FAILED"})`);
       }
-      return true;
+
+      if (
+        statusName === "PENDING" ||
+        statusName === "PROPOSING" ||
+        statusName === "COMMITTING" ||
+        statusName === "REVEALING" ||
+        rawStatus === 1 ||
+        rawStatus === 2 ||
+        rawStatus === 3 ||
+        rawStatus === 4
+      ) {
+        throw new Error(`Dispute resolution transaction is still pending consensus: ${txHash} (status: ${statusName || rawStatus})`);
+      }
+
+      if (statusName === "ACCEPTED" || rawStatus === 5) {
+        throw new Error(
+          `Dispute resolution transaction is ACCEPTED by validators but not yet FINALIZED into a StudioNet block: ${txHash}. Awaiting protocol finalization.`
+        );
+      }
+
+      const isFinalized = statusName === "FINALIZED" || rawStatus === 7;
+      if (!isFinalized) {
+        throw new Error(`Dispute resolution transaction lacks genuine finalization evidence on StudioNet: ${txHash}`);
+      }
+
+      return { status: "FINALIZED", result: resultName || "FINALIZED" };
     }
 
+    // 5a. Missing receipt
+    assert.throws(() => verifyReceiptFinalized(null, "0xmiss"), /Receipt missing or unconfirmed/);
+    assert.throws(() => verifyReceiptFinalized(undefined, "0xmiss"), /Receipt missing or unconfirmed/);
+
+    // 5b. Pending receipt
+    assert.throws(() => verifyReceiptFinalized({ statusName: "PENDING", status: 1 }, "0xpend"), /is still pending consensus/);
+    assert.throws(() => verifyReceiptFinalized({ statusName: "COMMITTING", status: 3 }, "0xcomm"), /is still pending consensus/);
+
+    // 5c. Accepted-only receipt (status 5) MUST NOT be treated as FINALIZED
     assert.throws(
-      () => processTransactionReceipt({ hash: "0xtx-fail", statusName: "REVERTED" }),
-      /Dispute resolution transaction failed on-chain/
+      () => verifyReceiptFinalized({ statusName: "ACCEPTED", status: 5 }, "0xacc"),
+      /ACCEPTED by validators but not yet FINALIZED into a StudioNet block/
     );
-    assert.throws(
-      () => processTransactionReceipt({ hash: "0xtx-pend", statusName: "PENDING" }),
-      /Dispute resolution transaction not yet finalized/
-    );
-    assert.strictEqual(processTransactionReceipt({ hash: "0xtx-ok", statusName: "ACCEPTED" }), true);
-    assert.strictEqual(processTransactionReceipt({ hash: "0xtx-ok2", statusName: "FINALIZED" }), true);
-    console.log("✔ PASS: Reverted and pending transactions rejected; only ACCEPTED/FINALIZED transactions proceed.");
+
+    // 5d. Failed / Reverted receipt
+    assert.throws(() => verifyReceiptFinalized({ statusName: "REVERTED" }, "0xfail1"), /failed on-chain/);
+    assert.throws(() => verifyReceiptFinalized({ statusName: "CANCELED" }, "0xfail2"), /failed on-chain/);
+    assert.throws(() => verifyReceiptFinalized({ result_name: "MAJORITY_DISAGREE" }, "0xfail3"), /failed on-chain/);
+
+    // 5e. Strictly Finalized receipt (status 7 / FINALIZED)
+    const finalizedRes1 = verifyReceiptFinalized({ status_name: "FINALIZED", status: 7, result_name: "MAJORITY_AGREE" }, "0xfin1");
+    assert.strictEqual(finalizedRes1.status, "FINALIZED");
+    assert.strictEqual(finalizedRes1.result, "MAJORITY_AGREE");
+
+    const finalizedRes2 = verifyReceiptFinalized({ statusName: "FINALIZED", status: 7 }, "0xfin2");
+    assert.strictEqual(finalizedRes2.status, "FINALIZED");
+
+    console.log("✔ PASS: Missing, pending, accepted-only, and failed receipts strictly rejected; only genuine FINALIZED receipts accepted.");
   }
 
   // ============================================================================
-  // Test 6: Retrying after a database error does not unnecessarily submit resolve_dispute again
+  // Test 6: Make resolution retries safe & isolate RPC errors from confirmed unresolved state
   // ============================================================================
-  console.log("\n[Test 6] Retrying after persistence failure does NOT re-submit resolve_dispute");
+  console.log("\n[Test 6] Resolution retries safe: distinguish confirmed unresolved from RPC errors");
   {
-    let writeContractCallCount = 0;
-    const contractState = {
-      "disp-retry-01": {
-        outcome: "BUYER_SUPPORTED",
-        rationale: "Pre-existing on-chain consensus resolution."
+    function isConfirmedUnresolvedError(err) {
+      if (!err) return false;
+      const rawStrings = [
+        String(err.message || ""),
+        String(err.shortMessage || ""),
+        String(err.details || ""),
+        String(err.cause?.message || ""),
+        String(err.cause?.data?.receipt?.result || ""),
+      ];
+      const rawResult = err.cause?.data?.receipt?.result;
+      if (typeof rawResult === "string") {
+        try {
+          const decoded = Buffer.from(rawResult, "base64").toString("utf8");
+          rawStrings.push(decoded);
+        } catch {}
       }
-    };
-
-    async function evaluateWithRetryCheck(disputeId) {
-      // Step 1: Check existing resolution via get_resolution
-      const existing = contractState[disputeId];
-      if (existing) {
-        // Read on-chain and return without writing
-        return { success: true, outcome: existing.outcome, rationale: existing.rationale, writeExecuted: false };
-      }
-      // Otherwise would writeContract
-      writeContractCallCount++;
-      return { success: true, writeExecuted: true };
+      const combined = rawStrings.join(" ");
+      return combined.includes("Dispute not yet resolved") || combined.includes("Dispute not found");
     }
 
-    const firstAttempt = await evaluateWithRetryCheck("disp-retry-01");
-    assert.strictEqual(firstAttempt.writeExecuted, false);
-    assert.strictEqual(firstAttempt.outcome, "BUYER_SUPPORTED");
-    assert.strictEqual(writeContractCallCount, 0, "Must not execute writeContract for existing on-chain resolution");
+    // 6a. Confirmed unresolved dispute
+    const confirmedUnresolvedErr = {
+      message: "execution failed",
+      cause: {
+        data: {
+          receipt: {
+            result: Buffer.from("\x01[EXPECTED] Dispute not yet resolved: d-123").toString("base64")
+          }
+        }
+      }
+    };
+    assert.strictEqual(isConfirmedUnresolvedError(confirmedUnresolvedErr), true);
 
-    const secondAttempt = await evaluateWithRetryCheck("disp-retry-01");
-    assert.strictEqual(secondAttempt.writeExecuted, false);
-    assert.strictEqual(writeContractCallCount, 0);
-    console.log("✔ PASS: Idempotent lookup reads existing on-chain resolution; resolve_dispute not re-submitted.");
+    // 6b. RPC errors, timeouts, 500s MUST NOT be treated as unresolved
+    const rpcTimeoutErr = new Error("Gateway timeout 504: failed to reach StudioNet RPC");
+    const rateLimitErr = new Error("HTTP 429 Too Many Requests");
+    const networkResetErr = new Error("ECONNRESET: socket hang up");
+    assert.strictEqual(isConfirmedUnresolvedError(rpcTimeoutErr), false);
+    assert.strictEqual(isConfirmedUnresolvedError(rateLimitErr), false);
+    assert.strictEqual(isConfirmedUnresolvedError(networkResetErr), false);
+
+    // 6c. Safe retry simulation: RPC error aborts and NEVER writes another transaction
+    let submittedTransactions = 0;
+    async function safeResolveRetryHandler(disputeId, simulateRpcFailure, existingTxHash) {
+      if (existingTxHash) {
+        // Retain existing transaction hash and do not submit another resolve transaction
+        return { action: "AWAIT_EXISTING_TX", txHash: existingTxHash };
+      }
+      if (simulateRpcFailure) {
+        const error = new Error("StudioNet RPC 503 Service Unavailable");
+        if (!isConfirmedUnresolvedError(error)) {
+          throw new Error(`RPC error querying resolution: ${error.message}. Aborting to protect on-chain state.`);
+        }
+      }
+      submittedTransactions++;
+      return { action: "TRANSACTION_SUBMITTED", txHash: "0xnew_tx_" + disputeId };
+    }
+
+    // When RPC fails, must abort without submitting transaction
+    await assert.rejects(
+      async () => safeResolveRetryHandler("disp-rpc-fail", true, null),
+      /RPC error querying resolution/
+    );
+    assert.strictEqual(submittedTransactions, 0, "No transaction must be broadcast on RPC read failure");
+
+    // When existing resolution transaction exists, retain actual hash and do not broadcast another
+    const retryWithExisting = await safeResolveRetryHandler("disp-existing", false, "0xactual_tx_hash_12345");
+    assert.strictEqual(retryWithExisting.action, "AWAIT_EXISTING_TX");
+    assert.strictEqual(retryWithExisting.txHash, "0xactual_tx_hash_12345");
+    assert.strictEqual(submittedTransactions, 0, "Existing transaction hash retained; zero duplicate transactions submitted");
+
+    console.log("✔ PASS: Confirmed unresolved state cleanly isolated from RPC errors; existing transaction hashes preserved without duplicate writes.");
   }
 
   // ============================================================================

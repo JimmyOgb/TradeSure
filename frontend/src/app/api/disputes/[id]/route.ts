@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   evaluateDisputeOnChain,
   getDisputeResolutionOnChain,
+  isConfirmedUnresolvedError,
   TRADESURE_CONTRACT_ADDRESS,
 } from "@/lib/genlayer";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -113,7 +114,16 @@ export async function POST(
       let existingOnchainRes = null;
       try {
         existingOnchainRes = await getDisputeResolutionOnChain(id);
-      } catch {
+      } catch (err: any) {
+        if (!isConfirmedUnresolvedError(err)) {
+          // Never submit another resolve_dispute transaction merely because an on-chain read failed
+          return NextResponse.json(
+            {
+              error: `RPC error querying on-chain resolution for dispute ${id}: ${err.message}. Resolution retry aborted to protect on-chain state.`,
+            },
+            { status: 502 }
+          );
+        }
         existingOnchainRes = null;
       }
 
@@ -169,6 +179,7 @@ export async function POST(
       }));
 
       // Execute on-chain GenLayer StudioNet transaction and fetch authoritative resolution
+      // If a resolution transaction was already broadcast, evaluateDisputeOnChain awaits its finalization
       const result = await evaluateDisputeOnChain({
         disputeId: id,
         orderId,
@@ -195,7 +206,7 @@ export async function POST(
           txHash: result.txHash,
           contractAddress: String(result.contractAddress),
           rationale: String(result.rationale),
-          status: "FINALIZED",
+          status: result.consensusStatus === "FINALIZED" ? "FINALIZED" : "ACCEPTED",
           executionResult: {
             outcome: result.outcome,
             rationale: result.rationale,
