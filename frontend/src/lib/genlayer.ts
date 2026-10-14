@@ -225,11 +225,13 @@ export async function evaluateDisputeOnChain(params: {
     description: string;
   }>;
   existingTxHash?: string;
+  onTransactionBroadcast?: (txHash: string) => Promise<void> | void;
 }) {
   const client = getGenLayerClient();
   const manifestJson = JSON.stringify(params.evidenceManifest);
+  let resolveTxHash: string | undefined = params.existingTxHash;
 
-  // Authorize caller on-chain: if buyerId is an internal ID, use client wallet address
+  // Authorize caller on-chain: if buyerId is internal ID, use client wallet address
   const onchainBuyerId =
     params.buyerId.startsWith("0x") && params.buyerId.length === 42
       ? params.buyerId
@@ -245,6 +247,8 @@ export async function evaluateDisputeOnChain(params: {
       const receipt = await (client.waitForTransactionReceipt as any)({
         hash: params.existingTxHash as `0x${string}`,
         status: "FINALIZED",
+        interval: 2500,
+        retries: 24,
       });
       const finalization = verifyReceiptFinalized(receipt, params.existingTxHash);
       const res = await getDisputeResolutionOnChain(params.disputeId);
@@ -273,7 +277,7 @@ export async function evaluateDisputeOnChain(params: {
         criteriaApplied: existingResolution.criteria_applied || "",
         contractAddress: TRADESURE_CONTRACT_ADDRESS,
         consensusStatus: "FINALIZED",
-        txHash: params.existingTxHash || undefined,
+        txHash: resolveTxHash || params.existingTxHash || undefined,
         isExisting: true,
       };
     } catch (err: any) {
@@ -319,21 +323,31 @@ export async function evaluateDisputeOnChain(params: {
     }
 
     // 4. Submit on-chain consensus resolution transaction
-    const resolveTxHash = await client.writeContract({
+    resolveTxHash = await client.writeContract({
       address: TRADESURE_CONTRACT_ADDRESS,
       functionName: "resolve_dispute",
       args: [params.disputeId],
       value: BigInt(0),
     });
 
+    if (params.onTransactionBroadcast && resolveTxHash) {
+      try {
+        await params.onTransactionBroadcast(resolveTxHash);
+      } catch (broadcastErr) {
+        console.warn("Failed to notify transaction broadcast:", broadcastErr);
+      }
+    }
+
     // Wait for protocol-confirmed FINALIZED execution state on StudioNet
     const resolveReceipt = await (client.waitForTransactionReceipt as any)({
       hash: resolveTxHash,
       status: "FINALIZED",
+      interval: 2500,
+      retries: 24,
     });
 
     // Strictly verify genuine finalization evidence without default fallbacks
-    const finalizationInfo = verifyReceiptFinalized(resolveReceipt, resolveTxHash);
+    const finalizationInfo = verifyReceiptFinalized(resolveReceipt, resolveTxHash || "");
 
     // 5. Read the authoritative on-chain resolution from get_resolution
     const authoritativeResolution = await getDisputeResolutionOnChain(params.disputeId);
@@ -353,6 +367,7 @@ export async function evaluateDisputeOnChain(params: {
   } catch (error: any) {
     return {
       success: false,
+      txHash: resolveTxHash,
       error: error.message || "Failed to execute GenLayer StudioNet transaction",
     };
   }

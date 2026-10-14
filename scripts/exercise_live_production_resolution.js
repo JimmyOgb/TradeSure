@@ -118,14 +118,28 @@ async function runLiveVerification() {
   console.log("\n[Step 5] Triggering on-chain dispute resolution via production API...");
   console.log("Executing POST /api/disputes/" + disputeId + " (action: resolve_onchain)...");
   const startTime = Date.now();
-  const resolveRes = await fetch(`${PROD_URL}/api/disputes/${disputeId}`, {
+  let resolveRes = await fetch(`${PROD_URL}/api/disputes/${disputeId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "resolve_onchain" }),
   });
-  const resolveData = await resolveRes.json();
+  let resolveData = await resolveRes.json();
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`Response received in ${duration}s: Status=${resolveRes.status}`);
+
+  // Safe retry: if transaction was broadcast and in flight on StudioNet, retry idempotent read/persistence
+  if (resolveRes.status === 502 && String(resolveData.error || "").includes("Timed out")) {
+    console.log("ℹ StudioNet transaction in flight awaiting block finalization. Safely retrying idempotent resolution query in 8s...");
+    await new Promise((r) => setTimeout(r, 8000));
+    resolveRes = await fetch(`${PROD_URL}/api/disputes/${disputeId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resolve_onchain" }),
+    });
+    resolveData = await resolveRes.json();
+    console.log(`Retry response: Status=${resolveRes.status}`);
+  }
+
   console.log("API Response Body:", JSON.stringify(resolveData, null, 2));
 
   assert(resolveRes.ok, `Production resolution failed: ${JSON.stringify(resolveData)}`);

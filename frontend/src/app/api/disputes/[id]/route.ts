@@ -5,7 +5,7 @@ import {
   isConfirmedUnresolvedError,
   TRADESURE_CONTRACT_ADDRESS,
 } from "@/lib/genlayer";
-import { isSupabaseConfigured } from "@/lib/supabase";
+import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase";
 import {
   fetchDisputeByIdFromSupabase,
   insertDisputeSubmissionIntoSupabase,
@@ -190,7 +190,27 @@ export async function POST(
         claimSummary,
         evidenceManifest,
         existingTxHash: data.dispute.onchain_tx_hash || undefined,
+        onTransactionBroadcast: async (txHash) => {
+          try {
+            await getSupabaseAdmin()
+              .from("disputes")
+              .update({ onchain_tx_hash: txHash })
+              .eq("id", id);
+          } catch (e) {
+            console.warn("Could not immediately persist broadcasted txHash:", e);
+          }
+        },
       });
+
+      // Preserve actual resolution transaction hash if one was broadcast even if receipt verification threw
+      if (!result.success && result.txHash) {
+        try {
+          await getSupabaseAdmin()
+            .from("disputes")
+            .update({ onchain_tx_hash: result.txHash })
+            .eq("id", id);
+        } catch {}
+      }
 
       if (
         result.success &&
@@ -199,11 +219,14 @@ export async function POST(
           result.outcome === "SELLER_SUPPORTED" ||
           result.outcome === "INCONCLUSIVE")
       ) {
+        const authoritativeTxHash =
+          result.txHash || data.dispute.onchain_tx_hash || undefined;
+
         await recordOnChainResolutionInSupabase({
           disputeId: id,
           orderId,
           outcome: result.outcome,
-          txHash: result.txHash,
+          txHash: authoritativeTxHash,
           contractAddress: String(result.contractAddress),
           rationale: String(result.rationale),
           status: result.consensusStatus === "FINALIZED" ? "FINALIZED" : "ACCEPTED",
