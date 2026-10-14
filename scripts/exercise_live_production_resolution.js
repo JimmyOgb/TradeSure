@@ -123,20 +123,31 @@ async function runLiveVerification() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "resolve_onchain" }),
   });
-  let resolveData = await resolveRes.json();
+  let rawText = await resolveRes.text();
+  let resolveData;
+  try {
+    resolveData = JSON.parse(rawText);
+  } catch {
+    resolveData = { error: rawText };
+  }
   const duration = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`Response received in ${duration}s: Status=${resolveRes.status}`);
 
-  // Safe retry: if transaction was broadcast and in flight on StudioNet, retry idempotent read/persistence
-  if (resolveRes.status === 502 && String(resolveData.error || "").includes("Timed out")) {
-    console.log("ℹ StudioNet transaction in flight awaiting block finalization. Safely retrying idempotent resolution query in 8s...");
+  // Safe retry: if transaction was broadcast and in flight on StudioNet or function timed out awaiting block finalization, safely retry idempotent resolution query
+  if (!resolveRes.ok || (resolveRes.status >= 500 && String(resolveData.error || "").includes("Timed out"))) {
+    console.log("ℹ StudioNet consensus in flight or awaiting finalization. Safely retrying idempotent resolution query in 8s...");
     await new Promise((r) => setTimeout(r, 8000));
     resolveRes = await fetch(`${PROD_URL}/api/disputes/${disputeId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "resolve_onchain" }),
     });
-    resolveData = await resolveRes.json();
+    rawText = await resolveRes.text();
+    try {
+      resolveData = JSON.parse(rawText);
+    } catch {
+      resolveData = { error: rawText };
+    }
     console.log(`Retry response: Status=${resolveRes.status}`);
   }
 
