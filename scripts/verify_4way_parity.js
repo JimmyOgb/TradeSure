@@ -254,69 +254,112 @@ async function verifyAll() {
     .from("orders")
     .select("id, status")
     .eq("id", orderId)
-    .maybeSingle();
+    .single();
 
-  if (orderErr) {
-    console.warn(`[WARN] Secondary order status query error: ${orderErr.message}`);
-  } else if (orderRow) {
-    assert.strictEqual(
-      orderRow.status,
-      "RESOLVED",
-      `Order status in DB must be RESOLVED, got: ${orderRow.status}`
-    );
-    recordAssertion("Secondary Order Persistence", true, `Order ${orderId} status: RESOLVED`);
-  }
+  assert.ok(!orderErr, `Failed to query orders table: ${orderErr ? orderErr.message : "unknown"}`);
+  assert.ok(orderRow, `Required order record for ID ${orderId} is missing`);
+  assert.strictEqual(
+    orderRow.status,
+    "RESOLVED",
+    `Order status in DB must be RESOLVED, got: ${orderRow.status}`
+  );
+  recordAssertion("Secondary Order Persistence & Status", true, `Order ${orderId} status: RESOLVED`);
 
   const { data: txRecord, error: txErr } = await supabase
     .from("onchain_transactions")
     .select("*")
     .eq("tx_hash", txHash)
-    .maybeSingle();
+    .single();
 
-  if (txErr) {
-    console.warn(`[WARN] onchain_transactions query error: ${txErr.message}`);
-  } else if (txRecord) {
-    assert.strictEqual(
-      txRecord.tx_hash,
-      txHash,
-      "onchain_transactions record hash mismatch"
-    );
-    recordAssertion(
-      "Secondary On-Chain Transaction Log",
-      true,
-      `Status: ${txRecord.status}`
-    );
-  }
+  assert.ok(!txErr, `Failed to query onchain_transactions table: ${txErr ? txErr.message : "unknown"}`);
+  assert.ok(txRecord, `Required onchain_transactions record for hash ${txHash} is missing`);
+  assert.strictEqual(
+    txRecord.tx_hash,
+    txHash,
+    `onchain_transactions tx_hash mismatch: expected ${txHash}, got: ${txRecord.tx_hash}`
+  );
+  assert.strictEqual(
+    txRecord.dispute_id,
+    disputeId,
+    `onchain_transactions dispute_id mismatch: expected ${disputeId}, got: ${txRecord.dispute_id}`
+  );
+  assert.strictEqual(
+    txRecord.status,
+    "FINALIZED",
+    `onchain_transactions status must be FINALIZED, got: ${txRecord.status}`
+  );
+  recordAssertion(
+    "Secondary On-Chain Transaction Log Hash & Status",
+    true,
+    `tx_hash: ${txHash}, status: ${txRecord.status}`
+  );
 
   const { data: auditEvents, error: auditErr } = await supabase
     .from("audit_events")
     .select("*")
     .eq("entity_id", disputeId);
 
-  if (auditErr) {
-    console.warn(`[WARN] audit_events query error: ${auditErr.message}`);
-  } else {
-    recordAssertion(
-      "Secondary Audit Events Log",
-      true,
-      `${auditEvents?.length || 0} event(s) recorded`
-    );
-  }
+  assert.ok(!auditErr, `Failed to query audit_events table: ${auditErr ? auditErr.message : "unknown"}`);
+  assert.ok(
+    Array.isArray(auditEvents) && auditEvents.length > 0,
+    `Required audit_events for dispute ${disputeId} are missing`
+  );
+
+  const resolutionEvent = auditEvents.find(
+    (e) => e.action === "DISPUTE_RESOLVED_ONCHAIN"
+  );
+  assert.ok(
+    resolutionEvent,
+    `Required audit_event with action "DISPUTE_RESOLVED_ONCHAIN" not found for dispute ${disputeId}`
+  );
+  assert.strictEqual(
+    resolutionEvent.metadata?.status,
+    "FINALIZED",
+    `Resolution audit event status must be FINALIZED, got: ${resolutionEvent.metadata?.status}`
+  );
+  assert.strictEqual(
+    resolutionEvent.metadata?.outcome,
+    onchainRes.outcome,
+    `Resolution audit event outcome mismatch: expected ${onchainRes.outcome}, got: ${resolutionEvent.metadata?.outcome}`
+  );
+  assert.strictEqual(
+    resolutionEvent.metadata?.tx_hash,
+    txHash,
+    `Resolution audit event tx_hash mismatch: expected ${txHash}, got: ${resolutionEvent.metadata?.tx_hash}`
+  );
+  recordAssertion(
+    "Secondary Audit Event Resolution Log",
+    true,
+    `action: ${resolutionEvent.action}, tx_hash: ${resolutionEvent.metadata?.tx_hash}`
+  );
 
   // Summary
+  const totalAssertions = assertionResults.length;
+  const passedCount = assertionResults.filter((r) => r.passed).length;
+  assert.ok(
+    totalAssertions >= 10,
+    `Expected at least 10 assertions to run, only ran ${totalAssertions}`
+  );
+  assert.strictEqual(
+    passedCount,
+    totalAssertions,
+    `Not all assertions passed: ${passedCount}/${totalAssertions}`
+  );
+
   console.log(
     "\n================================================================================"
   );
-  console.log("   ALL PARITY GATES PASSED (10/10 ASSERTIONS OK)");
+  console.log(`   ALL PARITY GATES PASSED (${passedCount}/${totalAssertions} ASSERTIONS OK)`);
   console.log(
     "================================================================================"
   );
-  console.log(`Dispute ID:          ${disputeId}`);
+  console.log(`Dispute ID:            ${disputeId}`);
   console.log(`Authoritative Outcome: ${onchainRes.outcome}`);
-  console.log(`Receipt Status:      ${tx.status} (${tx.status_name})`);
-  console.log(`Consensus Result:    ${tx.result_name}`);
-  console.log(`Verified Tx Hash:    ${txHash}`);
-  console.log("Parity Status:       PASS - 100% AUTHORITATIVE PARITY VERIFIED\n");
+  console.log(`Receipt Status:        ${tx.status} (${tx.status_name})`);
+  console.log(`Consensus Result:      ${tx.result_name}`);
+  console.log(`Verified Tx Hash:      ${txHash}`);
+  console.log(`Assertions Verified:   ${passedCount}/${totalAssertions}`);
+  console.log("Parity Status:         PASS - 100% AUTHORITATIVE PARITY VERIFIED\n");
 
   process.exit(0);
 }
